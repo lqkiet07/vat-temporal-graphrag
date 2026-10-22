@@ -38,32 +38,9 @@ export function parseCitationId(cid: string): Citation {
 export async function queryLegalApi(
   query: string,
   asOfDate: string,
-  pipeline: "P3" | "P2" | "P1"
+  pipeline: "P3" | "P2" | "P1",
+  useLlm: boolean = false
 ): Promise<Result> {
-  const trimmed = query.trim().toLowerCase();
-  const greetings = ["hi", "hello", "alo", "chào", "chào bạn", "xin chào", "hey", "hế lô", "test"];
-  
-  if (greetings.includes(trimmed)) {
-    return {
-      score: 0,
-      issue: "Hỏi đáp & Hướng dẫn sử dụng Hệ thống Thẩm định Pháp lý Thuế GTGT",
-      rule: "Cơ sở tri thức hiệu lực: Luật Thuế GTGT 48/2024/QH15, Nghị định 181/2025, Thông tư 69/2025, Nghị định 359/2025, Nghị định 144/2026.",
-      citations: [],
-      application: [
-        "Xin chào Quý khách / Quý Doanh nghiệp! Tôi là Trợ lý Pháp lý ảo về Thuế Giá trị gia tăng (GTGT) Việt Nam, được vận hành bởi Đồ thị Tri thức Thời gian (Temporal GraphRAG).",
-        "Hệ thống có thể hỗ trợ bạn trực tiếp:",
-        "• Thẩm định thuế suất GTGT cho từng trường hợp gia công, xuất khẩu, thương mại dịch vụ.",
-        "• Tra cứu tính hiệu lực thời gian của các điều luật tại bất kỳ mốc sự việc nào (tự động phát hiện bẫy niên đại).",
-        "• Đối chiếu quy trình xử lý và lập hóa đơn điều chỉnh theo các nghị định mới nhất.",
-      ],
-      conclusion: "Mời bạn nhập câu hỏi cụ thể về tình huống thuế GTGT hoặc chọn các kịch bản gợi ý bên dưới để bắt đầu thẩm định.",
-      audit: [
-        { tone: "ok", text: "Hệ thống đã kết nối trực tiếp với Neo4j Knowledge Graph và FastAPI Backend." },
-        { tone: "ok", text: "Trạng thái đồ thị: 5 văn bản pháp luật, 76 điều luật, 271 khoản sẵn sàng tra cứu." },
-      ],
-    };
-  }
-
   const pipelineMap: Record<string, string> = {
     P3: "P3_FullSystem",
     P2: "P2_TemporalGraph",
@@ -78,7 +55,7 @@ export async function queryLegalApi(
         query,
         as_of_date: asOfDate,
         pipeline: pipelineMap[pipeline] || "P3_FullSystem",
-        use_llm: false,
+        use_llm: useLlm,
         model: "qwen2.5:3b",
       }),
     });
@@ -88,6 +65,59 @@ export async function queryLegalApi(
     }
 
     const data = await res.json();
+
+    // 1. Out of domain query handling
+    if (data.is_out_of_domain) {
+      return {
+        score: 0,
+        issue: data.irac_sections?.issue || `Kiểm tra phạm vi áp dụng: "${query}"`,
+        rule: data.irac_sections?.rule || "Không có quy phạm pháp luật thuế GTGT điều chỉnh nội dung này.",
+        citations: [],
+        application: [
+          data.irac_sections?.application ||
+            "Câu hỏi của bạn không thuộc phạm vi điều chỉnh của Hệ thống Pháp lý Thuế Giá trị gia tăng (GTGT).",
+        ],
+        conclusion:
+          data.irac_sections?.conclusion ||
+          "Câu hỏi của bạn không thuộc phạm vi điều chỉnh của Hệ thống Pháp lý Thuế Giá trị gia tăng (GTGT). Vui lòng đặt câu hỏi liên quan đến chính sách thuế, thuế suất hoặc quy định hóa đơn chứng từ.",
+        audit: [
+          {
+            tone: "warn",
+            text: "Phát hiện câu hỏi nằm ngoài phạm vi nghiệp vụ Pháp lý Thuế GTGT.",
+          },
+          {
+            tone: "ok",
+            text: "Màng lọc Domain Guardrail đã kích hoạt để bảo vệ tính chính xác của cơ sở tri thức.",
+          },
+        ],
+        is_out_of_domain: true,
+      };
+    }
+
+    // 2. Conversational greeting handling
+    if (data.is_greeting) {
+      return {
+        score: 0,
+        issue: "Hỏi đáp & Hướng dẫn sử dụng Hệ thống Thẩm định Pháp lý Thuế GTGT",
+        rule: "Cơ sở tri thức hiệu lực: Luật Thuế GTGT 48/2024/QH15, Nghị định 181/2025, Thông tư 69/2025, Nghị định 359/2025, Nghị định 144/2026.",
+        citations: [],
+        application: [
+          "Xin chào Quý khách / Quý Doanh nghiệp! Tôi là Trợ lý Pháp lý ảo về Thuế Giá trị gia tăng (GTGT) Việt Nam, được vận hành bởi Đồ thị Tri thức Thời gian (Temporal GraphRAG).",
+          "Hệ thống có thể hỗ trợ bạn trực tiếp:",
+          "• Thẩm định thuế suất GTGT cho từng trường hợp gia công, xuất khẩu, thương mại dịch vụ.",
+          "• Tra cứu tính hiệu lực thời gian của các điều luật tại bất kỳ mốc sự việc nào (tự động phát hiện bẫy niên đại).",
+          "• Đối chiếu quy trình xử lý và lập hóa đơn điều chỉnh theo các nghị định mới nhất.",
+        ],
+        conclusion: "Mời bạn nhập câu hỏi cụ thể về tình huống thuế GTGT hoặc chọn các kịch bản gợi ý bên dưới để bắt đầu thẩm định.",
+        audit: [
+          { tone: "ok", text: "Hệ thống đã kết nối trực tiếp với Neo4j Knowledge Graph và FastAPI Backend." },
+          { tone: "ok", text: "Trạng thái đồ thị: 5 văn bản pháp luật, 76 điều luật, 271 khoản sẵn sàng tra cứu." },
+        ],
+        is_greeting: true,
+      };
+    }
+
+    // 3. Normal in-domain tax query
     const rawCitations: string[] = data.citations || [];
     const citations = rawCitations.map(parseCitationId);
 

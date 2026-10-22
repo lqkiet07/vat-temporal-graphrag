@@ -20,14 +20,31 @@ def reciprocal_rank_fusion(
     return sorted(scores.items(), key=lambda item: item[1], reverse=True)
 
 
+def _format_lucene_query(query: str) -> str:
+    """Format user query into high-precision Lucene query with phrase and AND matching."""
+    clean_kw = "".join(
+        c if c not in r'+-&|!(){}[]^"~*?:\/' else " " for c in query
+    ).strip()
+    words = clean_kw.split()
+    if not words:
+        return ""
+    if len(words) == 1:
+        return words[0]
+
+    exact_phrase = f'"{clean_kw}"'
+    bigrams = [f'"{words[i]} {words[i+1]}"' for i in range(len(words) - 1)]
+    and_query = " AND ".join(words)
+    if bigrams:
+        return f'{exact_phrase}^4 OR {" OR ".join(f"{bg}^2" for bg in bigrams[:6])} OR ({and_query})'
+    return f'{exact_phrase}^4 OR ({and_query})'
+
+
 def _search_fulltext(
     session, query: str, as_of_date: str, limit: int = 30
 ) -> list[str]:
     """Search candidate article IDs using Lucene fulltext index with fallback."""
-    clean_kw = "".join(
-        c if c not in r'+-&|!(){}[]^"~*?:\\/' else " " for c in query
-    ).strip()
-    if clean_kw:
+    formatted_kw = _format_lucene_query(query)
+    if formatted_kw:
         try:
             cypher_lucene = """
             CALL db.index.fulltext.queryNodes('article_content_fulltext', $kw) YIELD node, score
@@ -41,7 +58,7 @@ def _search_fulltext(
             LIMIT $limit
             """
             rows = session.run(
-                cypher_lucene, kw=clean_kw, as_of_date=as_of_date, limit=limit
+                cypher_lucene, kw=formatted_kw, as_of_date=as_of_date, limit=limit
             ).data()
             if rows:
                 return [r["id"] for r in rows if r.get("id")]

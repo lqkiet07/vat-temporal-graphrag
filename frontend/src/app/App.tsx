@@ -30,6 +30,7 @@ type SystemSettings = {
   language: "vi" | "en";
   defaultDate: string;
   theme: "light" | "dark" | "system";
+  useLlm: boolean;
 };
 
 const DEFAULT_USER: UserState = {
@@ -51,6 +52,7 @@ const DEFAULT_SETTINGS: SystemSettings = {
   language: "vi",
   defaultDate: "2026-03-20",
   theme: "light",
+  useLlm: false,
 };
 
 const PIPELINES = [
@@ -235,7 +237,7 @@ export function App() {
     );
 
     // Multi-step reasoning & real backend API query
-    const apiPromise = queryLegalApi(q, d, pipeline);
+    const apiPromise = queryLegalApi(q, d, pipeline, settings.useLlm);
     for (let s = 0; s < STEPS.length - 1; s++) {
       setStep(s);
       await new Promise((r) => setTimeout(r, 260));
@@ -1118,6 +1120,20 @@ export function App() {
               </div>
             </div>
 
+            {/* 5. LLM Mode Toggle */}
+            <div className="flex items-center justify-between rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-3">
+              <div>
+                <div className="font-bold text-[#0F172A] text-[13px]">Bật mô hình ngôn ngữ lớn (LLM)</div>
+                <div className="text-[11.5px] text-[#64748B]">Tổng hợp lập luận IRAC bằng AI (Ollama Qwen2.5 / Gemini API)</div>
+              </div>
+              <input
+                type="checkbox"
+                checked={settings.useLlm}
+                onChange={(e) => setSettings({ ...settings, useLlm: e.target.checked })}
+                className="h-4 w-4 rounded accent-[#1E3A8A] cursor-pointer"
+              />
+            </div>
+
             {/* 5. Account Management: Login / Logout */}
             <div className="border-t border-[#E2E8F0] pt-3">
               <label className="font-bold text-[#0F172A] block mb-1">5. Trạng thái người dùng</label>
@@ -1273,16 +1289,32 @@ function Answer({
 
       {/* Main Legal Conclusion Box */}
       <div className="mt-3.5 rounded-2xl bg-[#F8FAFC] p-4 border border-[#E2E8F0]">
-        <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider text-[#1E3A8A]">
-          <CheckCircle2 className="h-4 w-4 text-[#059669]" />
-          <span>Kết luận pháp lý</span>
+        <div className="flex items-center gap-2 text-[12px] font-bold uppercase tracking-wider">
+          {r.is_out_of_domain ? (
+            <>
+              <AlertTriangle className="h-4 w-4 text-[#D97706]" />
+              <span className="text-[#D97706]">Lưu ý phạm vi nghiệp vụ</span>
+            </>
+          ) : r.is_greeting ? (
+            <>
+              <Sparkles className="h-4 w-4 text-[#2563EB]" />
+              <span className="text-[#2563EB]">Chào mừng &amp; Hướng dẫn tra cứu</span>
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-4 w-4 text-[#059669]" />
+              <span className="text-[#1E3A8A]">Kết luận pháp lý</span>
+            </>
+          )}
         </div>
         <p className="mt-2 text-[15px] font-semibold leading-relaxed text-[#0F172A]">
           {r.conclusion}
         </p>
-        <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">
-          <strong>Căn cứ:</strong> {r.rule}
-        </p>
+        {!r.is_out_of_domain && !r.is_greeting && r.rule && (
+          <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">
+            <strong>Căn cứ:</strong> {r.rule}
+          </p>
+        )}
       </div>
 
       {/* Warning / Temporal Trap Box */}

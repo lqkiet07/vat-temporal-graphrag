@@ -221,6 +221,8 @@ export type Result = {
   conclusion: string;
   audit: AuditItem[];
   trap?: string;
+  is_out_of_domain?: boolean;
+  is_greeting?: boolean;
 };
 
 export const SCENARIOS = [

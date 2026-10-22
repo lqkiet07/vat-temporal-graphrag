@@ -1,3 +1,4 @@
+from src.verifier.guardrails import check_query_domain
 """Business logic and sample scenarios for the interactive VAT demo UI."""
 from html import escape
 from src.benchmark.baselines import run_p1_baseline_rag
@@ -106,7 +107,53 @@ def execute_demo_query(
     model: str = "qwen2.5:3b",
 ) -> dict:
     """Execute a query against specified pipeline and return IRAC analysis with risk score."""
+    # 1. Domain guardrail check
+    guard = check_query_domain(query)
+    if not guard.is_allowed:
+        return {
+            "query": query,
+            "as_of_date": as_of_date,
+            "pipeline": pipeline,
+            "citations": [],
+            "active_article_ids": [],
+            "risk_score": 0,
+            "risk_level": "LOW",
+            "warnings": [],
+            "irac_sections": {
+                "issue": f"Phạm vi áp dụng pháp lý: '{query}'",
+                "rule": "Phạm vi điều chỉnh: Các văn bản pháp luật về Thuế Giá trị gia tăng (Luật 48/2024, NĐ 181/2025, TT 69/2025, NĐ 359/2025, NĐ 144/2026).",
+                "application": guard.refusal_message,
+                "conclusion": guard.refusal_message,
+            },
+            "llm_used": False,
+            "raw_llm_response": None,
+            "is_out_of_domain": not guard.is_greeting,
+            "is_greeting": guard.is_greeting,
+        }
+
     citations, active_ids, articles = _fetch_pipeline_articles(pipeline, query, as_of_date)
+
+    if not citations and not articles:
+        return {
+            "query": query,
+            "as_of_date": as_of_date,
+            "pipeline": pipeline,
+            "citations": [],
+            "active_article_ids": [],
+            "risk_score": 0,
+            "risk_level": "LOW",
+            "warnings": ["Không tìm thấy điều khoản pháp luật thuế GTGT nào điều chỉnh nội dung này tại mốc thời gian tra cứu."],
+            "irac_sections": {
+                "issue": f"Xác định quy định pháp luật cho: '{query}' tại mốc {as_of_date}.",
+                "rule": "Không tìm thấy điều khoản pháp luật thuế GTGT phù hợp.",
+                "application": f"Tại mốc {as_of_date}, hệ thống đã đối chiếu qua cơ sở dữ liệu pháp luật thuế GTGT nhưng không tìm thấy điều khoản nào quy định nội dung này.",
+                "conclusion": "Câu hỏi không có căn cứ pháp luật thuế GTGT điều chỉnh tại mốc thời gian đã chọn.",
+            },
+            "llm_used": False,
+            "raw_llm_response": None,
+            "is_out_of_domain": False,
+            "is_greeting": False,
+        }
 
     if use_llm:
         prompt_articles = articles if pipeline != "P1_FlatRAG" else []

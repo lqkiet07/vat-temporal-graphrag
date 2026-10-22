@@ -1,15 +1,10 @@
-# Task Tracking: Refactor Public Legal Service UI (VAT Temporal GraphRAG)
+# Task Tracking: Upgrade Chat Pipeline (feature/upgradeChat)
 
-- [x] Update index.html title to "Hệ thống Hỏi đáp Pháp lý Thuế GTGT" and add emblem favicon
-- [x] Replace header and sidebar branding with tai-xuong.png logo and public service title
-- [x] Remove "Xuất PDF" button completely
-- [x] Remove "Nhiệm vụ" segmented pill button completely
-- [x] Implement Guest vs Authenticated state (Guest by default, modal login to Huỳnh Tấn Phúc)
-- [x] Refactor Settings modal to only include: Model, Language, Default Date, Theme, Login/Logout
-- [x] Build Categorized Library ("Thư viện văn bản") with sections (Tất cả, Luật, Nghị định, Thông tư)
-- [x] Link Top bar "Văn bản liên quan" strictly to cited articles of active query
-- [x] Remove "Văn bản nội bộ" feature and UI elements completely as requested by user
-- [x] Start Neo4j container & seed 5 legal documents, 76 articles, temporal relations into graph
-- [x] Connect React frontend with FastAPI backend (`/api/query`, `/api/health`, `/api/documents`)
-- [x] Handle conversational greetings (e.g. "hi", "xin chào") with polite introduction and usage guidance
-- [x] Verify build with npm run build (0 errors) & capture browser screenshots
+- [x] Branch `feature/upgradeChat` created and checked out
+- [x] Implement `src/verifier/guardrails.py` (Domain Guardrail for VAT legal queries)
+- [x] Connect Guardrail to `src/ui/demo_service.py` & API endpoint
+- [x] Upgrade `src/engine/hybrid_retriever.py` with Lucene bigram/AND phrase querying & score boosting
+- [x] Enhance `src/engine/llm_client.py` and `prompt.py` for Gemini/OpenAI/Ollama with out-of-scope discernment
+- [x] Update frontend `frontend/src/app/api.ts` and `App.tsx` (LLM toggle + clean guardrail refusal card)
+- [x] Run backend tests (`pytest`: 115 passed) and verify frontend build (`npm run build`: 0 errors)
+- [x] Test in browser with "thuật toán quy hoạch động" and verify polite refusal (verified in browser)

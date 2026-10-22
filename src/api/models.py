@@ -27,6 +27,8 @@ class QueryResponse(BaseModel):
     irac_sections: dict[str, str] = Field(..., description="Structured IRAC response sections")
     llm_used: bool = Field(default=False, description="Indicates whether LLM was used")
     raw_llm_response: str | None = Field(default=None, description="Raw generation output from LLM")
+    is_out_of_domain: bool = Field(default=False, description="Whether query was outside VAT legal domain")
+    is_greeting: bool = Field(default=False, description="Whether query was a conversational greeting")
 
 
 class DocumentSummary(BaseModel):

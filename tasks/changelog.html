@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <title>Changelog - Nâng cấp Hệ thống Hỏi đáp Pháp lý Thuế GTGT</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; padding: 24px; color: #1e293b; background: #f8fafc; }
+    h1 { color: #1e3a8a; border-bottom: 2px solid #3b82f6; padding-bottom: 8px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+    th, td { padding: 12px 16px; border-bottom: 1px solid #e2e8f0; text-align: left; }
+    th { background: #f1f5f9; font-weight: 600; color: #334155; }
+    .badge-ok { background: #d1fae5; color: #065f46; padding: 4px 8px; border-radius: 9999px; font-size: 12px; font-weight: 600; }
+    .code { font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <h1>Nhật Ký Nâng Cấp Hệ Thống (Changelog)</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>Thời gian</th>
+        <th>Nhánh Git</th>
+        <th>Nội dung nâng cấp / Khắc phục</th>
+        <th>Các tệp tác động</th>
+        <th>Kết quả kiểm thử</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>2026-10-22 22:24</td>
+        <td><span class="code">feature/upgradeChat</span></td>
+        <td>
+          <strong>1. Màng lọc phạm vi nghiệp vụ (Domain Guardrail):</strong> Tự động chặn và từ chối lịch sự các câu hỏi ngoài phạm vi (như 'thuật toán quy hoạch động', thời tiết, lập trình) thay vì ghép bừa vào luật thuế.<br>
+          <strong>2. Cải tiến tìm kiếm Lucene Full-text:</strong> Ưu tiên cụm từ chính xác và bigram ghép từ, ngăn chặn lọt các từ đơn lẻ ('quy', 'động').<br>
+          <strong>3. Hỗ trợ đa mô hình LLM:</strong> Tích hợp Ollama (qwen2.5:3b) và Google Gemini API với prompt phân định phủ định (negative constraint).<br>
+          <strong>4. Nút gạt LLM trong Cài đặt:</strong> Bật/tắt chế độ LLM trực quan trên UI.
+        </td>
+        <td>
+          <span class="code">src/verifier/guardrails.py</span><br>
+          <span class="code">src/ui/demo_service.py</span><br>
+          <span class="code">src/engine/hybrid_retriever.py</span><br>
+          <span class="code">src/engine/llm_client.py</span><br>
+          <span class="code">src/engine/prompt.py</span><br>
+          <span class="code">frontend/src/app/App.tsx</span><br>
+          <span class="code">frontend/src/app/api.ts</span>
+        </td>
+        <td><span class="badge-ok">Pytest: 115/115 PASSED</span><br><span class="badge-ok">Build: 0 errors</span></td>
+      </tr>
+      <tr>
+        <td>2026-10-22 22:05</td>
+        <td><span class="code">feature/enhance-ui</span></td>
+        <td>
+          <strong>Nâng cấp Giao diện Trực quan:</strong><br>
+          - Thiết kế theo phong cách Gemini thanh lịch, nền Trống đồng Đông Sơn mờ trung tâm.<br>
+          - Xóa bỏ chức năng 'Văn bản nội bộ' theo chỉ đạo.<br>
+          - Ngăn kéo 'Văn bản liên quan' động trích dẫn trực tiếp từ kết quả truy vấn.<br>
+          - Đấu nối API Backend FastAPI + Neo4j.
+        </td>
+        <td>
+          <span class="code">frontend/src/app/App.tsx</span><br>
+          <span class="code">frontend/src/styles/</span><br>
+          <span class="code">frontend/vite.config.ts</span>
+        </td>
+        <td><span class="badge-ok">Build: 0 errors</span></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

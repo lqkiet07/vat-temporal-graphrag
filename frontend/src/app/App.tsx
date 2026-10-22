@@ -5,7 +5,7 @@ import {
   GitBranch, History, Info, Layers, LayoutGrid, Lightbulb, Loader2, Lock,
   LogOut, MapPin, MessageSquare, Mic, MoreHorizontal, PanelLeft, PanelLeftClose,
   Paperclip, Plus, RotateCcw, Search, Send, Settings, Share2, Sliders,
-  SquarePen, ThumbsDown, ThumbsUp, Trash2, User, UserCheck, X,
+  Sparkles, SquarePen, ThumbsDown, ThumbsUp, Trash2, User, UserCheck, X,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/app/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/app/components/ui/popover";
@@ -1360,39 +1360,43 @@ function Answer({
       </div>
 
       {/* Citations Badges */}
-      <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-[#F1F5F9] pt-3">
-        <span className="text-[11px] font-bold text-[#64748B]">Văn bản trích dẫn:</span>
-        {r.citations.map((c) => (
-          <button
-            key={c.label}
-            onClick={onOpenRelated}
-            className="flex items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-0.5 text-[11px] font-semibold text-[#1E3A8A] transition hover:bg-[#DBEAFE]"
-            title="Bấm để xem chi tiết văn bản liên quan"
-          >
-            <span>{c.label}</span>
-            <ExternalLink className="h-2.5 w-2.5" />
-          </button>
-        ))}
-      </div>
+      {!r.is_out_of_domain && !r.is_greeting && r.citations && r.citations.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center gap-1.5 border-t border-[#F1F5F9] pt-3">
+          <span className="text-[11px] font-bold text-[#64748B]">Văn bản trích dẫn:</span>
+          {r.citations.map((c) => (
+            <button
+              key={c.label}
+              onClick={onOpenRelated}
+              className="flex items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-0.5 text-[11px] font-semibold text-[#1E3A8A] transition hover:bg-[#DBEAFE]"
+              title="Bấm để xem chi tiết văn bản liên quan"
+            >
+              <span>{c.label}</span>
+              <ExternalLink className="h-2.5 w-2.5" />
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Collapsible Temporal Graph Trace */}
-      <div className="mt-3 border-t border-[#F1F5F9] pt-2.5">
-        <button
-          onClick={() => setShowTrace(!showTrace)}
-          className="flex items-center gap-1.5 text-[12px] font-medium text-[#1E3A8A] hover:underline"
-        >
-          <GitBranch className="h-3.5 w-3.5" />
-          <span>{showTrace ? "Ẩn đường đi đồ thị tri thức Neo4j" : "Xem đường đi suy luận trên Đồ thị Thời gian"}</span>
-        </button>
+      {!r.is_out_of_domain && !r.is_greeting && r.citations && r.citations.length > 0 && (
+        <div className="mt-3 border-t border-[#F1F5F9] pt-2.5">
+          <button
+            onClick={() => setShowTrace(!showTrace)}
+            className="flex items-center gap-1.5 text-[12px] font-medium text-[#1E3A8A] hover:underline"
+          >
+            <GitBranch className="h-3.5 w-3.5" />
+            <span>{showTrace ? "Ẩn đường đi đồ thị tri thức Neo4j" : "Xem đường đi suy luận trên Đồ thị Thời gian"}</span>
+          </button>
 
-        {showTrace && (
-          <div className="mt-2 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 text-[11.5px] font-mono text-[#334155]">
-            <div className="text-[#059669] font-bold">{"MATCH (e:Entity {name: 'PhanMem'})-[r:has_temporal_tax_rate]->(t:TaxRate)"}</div>
-            <div className="text-[#6B7280]">{"WHERE r.start_date <= date('"}{msg.date}{"') AND date('"}{msg.date}{"') <= r.end_date"}</div>
-            <div className="text-[#1E3A8A] font-bold mt-1">{"-> Result: Rate = 0% | Interval: [2025-07-01, inf) | Law: 48/2024/QH15 Art 9.1.b"}</div>
-          </div>
-        )}
-      </div>
+          {showTrace && (
+            <div className="mt-2 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 text-[11.5px] font-mono text-[#334155]">
+              <div className="text-[#059669] font-bold">{"MATCH (e:Entity {name: 'PhanMem'})-[r:has_temporal_tax_rate]->(t:TaxRate)"}</div>
+              <div className="text-[#6B7280]">{"WHERE r.start_date <= date('"}{msg.date}{"') AND date('"}{msg.date}{"') <= r.end_date"}</div>
+              <div className="text-[#1E3A8A] font-bold mt-1">{"-> Result: Rate = 0% | Interval: [2025-07-01, inf) | Law: 48/2024/QH15 Art 9.1.b"}</div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Action Toolbar: Copy, Thumbs Up/Down, Share */}
       <div className="mt-3 flex items-center justify-between border-t border-[#F1F5F9] pt-2.5 text-[#64748B]">

@@ -104,7 +104,7 @@ def execute_demo_query(
     as_of_date: str,
     pipeline: str = "P3_FullSystem",
     use_llm: bool = False,
-    model: str = "qwen2.5:3b",
+    model: str = "qwen2.5:7b",
 ) -> dict:
     """Execute a query against specified pipeline and return IRAC analysis with risk score."""
     # 1. Domain guardrail check

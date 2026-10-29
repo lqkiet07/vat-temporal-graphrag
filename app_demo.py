@@ -127,11 +127,11 @@ def render_sidebar() -> tuple[str, bool]:
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("#### 🤖 Cấu hình AI Engine (Local LLM)")
-    use_llm = st.sidebar.checkbox("Kích hoạt Ollama Local (qwen2.5:3b)", value=False)
+    use_llm = st.sidebar.checkbox("Kích hoạt Ollama Local (qwen2.5:7b)", value=False)
     if use_llm:
         ollama_online = check_ollama_available()
         if ollama_online:
-            st.sidebar.success("🟢 Ollama Online (qwen2.5:3b)")
+            st.sidebar.success("🟢 Ollama Online (qwen2.5:7b)")
         else:
             st.sidebar.warning("⚪ Ollama chưa bật (fallback về Tất định an toàn)")
     st.session_state["use_llm"] = use_llm
@@ -283,7 +283,7 @@ def handle_run_pipeline(
         as_of_date=as_of_str,
         pipeline=pipeline_key,
         use_llm=use_llm,
-        model="qwen2.5:3b",
+        model="qwen2.5:7b",
     )
     st.session_state["last_result"] = res
     st.session_state["active_article_ids"] = res.get("active_article_ids", [])
@@ -329,7 +329,7 @@ def render_reasoning_column(
         return
 
     if last_result.get("llm_used"):
-        st.caption("🤖 Lập luận tự nhiên sinh bởi Ollama Local (qwen2.5:3b) • Đã qua chốt chặn Verifier")
+        st.caption("🤖 Lập luận tự nhiên sinh bởi Ollama Local (qwen2.5:7b) • Đã qua chốt chặn Verifier")
     else:
         st.caption("⚙️ Chế độ Tất định An toàn (Deterministic Safe Mode • 0 VNĐ)")
 

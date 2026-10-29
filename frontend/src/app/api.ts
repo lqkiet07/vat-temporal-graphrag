@@ -56,7 +56,7 @@ export async function queryLegalApi(
         as_of_date: asOfDate,
         pipeline: pipelineMap[pipeline] || "P3_FullSystem",
         use_llm: useLlm,
-        model: "qwen2.5:3b",
+        model: "qwen2.5:7b",
       }),
     });
 

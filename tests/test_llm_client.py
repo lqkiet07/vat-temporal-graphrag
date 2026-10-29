@@ -44,7 +44,7 @@ def test_generate_llm_response_sends_correct_payload():
     mock_resp.__enter__.return_value = mock_resp
 
     with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen:
-        generate_llm_response(prompt="Hello", model="qwen2.5:3b", host="http://localhost:11434")
+        generate_llm_response(prompt="Hello", model="qwen2.5:7b", host="http://localhost:11434")
 
         assert mock_urlopen.called
         req = mock_urlopen.call_args[0][0]
@@ -53,7 +53,7 @@ def test_generate_llm_response_sends_correct_payload():
 
         body = json.loads(req.data.decode("utf-8"))
         assert body == {
-            "model": "qwen2.5:3b",
+            "model": "qwen2.5:7b",
             "prompt": "Hello",
             "stream": False,
         }

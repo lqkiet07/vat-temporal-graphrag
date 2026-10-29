@@ -106,6 +106,10 @@ def test_apptest_run_pipeline_execution():
 
 def test_apptest_run_pipeline_with_llm(monkeypatch):
     monkeypatch.setattr("src.engine.llm_client.check_ollama_available", lambda: True)
+    monkeypatch.setattr(
+        "src.ui.demo_service.generate_llm_response",
+        lambda *args, **kwargs: "Issue: test\nRule: test\nApplication: test\nConclusion: test",
+    )
 
     from src.ui import demo_service
     orig_exec = demo_service.execute_demo_query
@@ -118,12 +122,12 @@ def test_apptest_run_pipeline_with_llm(monkeypatch):
     at = AppTest.from_file(APP_DEMO_PATH, default_timeout=15).run(timeout=15)
     at.sidebar.checkbox[0].check().run(timeout=15)
     assert len(at.sidebar.success) >= 1
-    assert any("Ollama Online (qwen2.5:3b)" in s.value for s in at.sidebar.success)
+    assert any("Ollama Online (qwen2.5:7b)" in s.value for s in at.sidebar.success)
 
     at.button[0].click().run(timeout=15)
     assert len(at.exception) == 0
     captions = [c.value for c in at.caption]
-    assert any("Lập luận tự nhiên sinh bởi Ollama Local (qwen2.5:3b) • Đã qua chốt chặn Verifier" in c for c in captions)
+    assert any("Lập luận tự nhiên sinh bởi Ollama Local (qwen2.5:7b) • Đã qua chốt chặn Verifier" in c for c in captions)
 
 
 def test_handle_run_pipeline_llm_flag(monkeypatch):
@@ -150,8 +154,8 @@ def test_handle_run_pipeline_llm_flag(monkeypatch):
 
     app_demo.handle_run_pipeline([], "P3_FullSystem", use_llm=True)
     assert called_kwargs.get("use_llm") is True
-    assert called_kwargs.get("model") == "qwen2.5:3b"
+    assert called_kwargs.get("model") == "qwen2.5:7b"
 
     app_demo.handle_run_pipeline([], "P3_FullSystem", use_llm=False)
     assert called_kwargs.get("use_llm") is False
-    assert called_kwargs.get("model") == "qwen2.5:3b"
+    assert called_kwargs.get("model") == "qwen2.5:7b"

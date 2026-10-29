@@ -81,7 +81,7 @@ def _call_openai_api(prompt: str, api_key: str, model: str = "gpt-4o-mini", time
     return None
 
 
-def _call_ollama(prompt: str, model: str = "qwen2.5:3b", host: str = "http://localhost:11434", timeout: float = 30.0) -> str | None:
+def _call_ollama(prompt: str, model: str = "qwen2.5:7b", host: str = "http://localhost:11434", timeout: float = 30.0) -> str | None:
     """Generate a response from Ollama API using the specified prompt and model."""
     url = f"{host}/api/generate"
     payload = json.dumps(
@@ -108,7 +108,7 @@ def _call_ollama(prompt: str, model: str = "qwen2.5:3b", host: str = "http://loc
 
 def generate_llm_response(
     prompt: str,
-    model: str = "qwen2.5:3b",
+    model: str = "qwen2.5:7b",
     host: str = "http://localhost:11434",
     timeout: float = 30.0,
 ) -> str | None:

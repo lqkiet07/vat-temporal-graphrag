@@ -11,7 +11,7 @@ def test_query_request_validation():
     assert req.as_of_date == "2024-01-01"
     assert req.pipeline == "P3_FullSystem"
     assert req.use_llm is False
-    assert req.model == "qwen2.5:3b"
+    assert req.model == "qwen2.5:7b"
 
     with pytest.raises(ValidationError):
         QueryRequest(query="Thiếu ngày")

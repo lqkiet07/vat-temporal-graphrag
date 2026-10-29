@@ -10,7 +10,7 @@ class QueryRequest(BaseModel):
     as_of_date: str = Field(..., description="Reference point date in YYYY-MM-DD format")
     pipeline: str = Field(default="P3_FullSystem", description="Retrieval pipeline identifier")
     use_llm: bool = Field(default=False, description="Whether to invoke LLM generation")
-    model: str = Field(default="qwen2.5:3b", description="LLM model identifier")
+    model: str = Field(default="qwen2.5:7b", description="LLM model identifier")
 
 
 class QueryResponse(BaseModel):

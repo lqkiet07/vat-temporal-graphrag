@@ -186,7 +186,7 @@ def test_execute_demo_query_with_llm_success():
             as_of_date,
             pipeline="P3_FullSystem",
             use_llm=True,
-            model="qwen2.5:3b",
+            model="qwen2.5:7b",
         )
     assert result["llm_used"] is True
     assert result["raw_llm_response"] is not None
@@ -203,7 +203,7 @@ def test_execute_demo_query_with_llm_fallback():
             as_of_date,
             pipeline="P3_FullSystem",
             use_llm=True,
-            model="qwen2.5:3b",
+            model="qwen2.5:7b",
         )
     assert result["llm_used"] is False
     assert result["raw_llm_response"] is None

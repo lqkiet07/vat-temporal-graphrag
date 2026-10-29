@@ -1,6 +1,12 @@
 """API routes for VAT Legal Temporal GraphRAG."""
-from fastapi import APIRouter, HTTPException
+import json
+from collections.abc import Iterator
 
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+
+from src.api.chat_models import ChatRequest, ChatResponse
+from src.api.chat_service import build_response, stream_chat
 from src.api.models import DocumentSummary, HealthResponse, QueryRequest, QueryResponse
 from src.graph.connection import get_neo4j_driver
 from src.ui.corpus_viewer import load_corpus_tree
@@ -67,3 +73,34 @@ def post_query(req: QueryRequest) -> QueryResponse:
         model=req.model,
     )
     return QueryResponse(**result)
+
+
+def _sse_frame(name: str, payload: dict) -> str:
+    """Format one server-sent event frame."""
+    return f"event: {name}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat", response_model=ChatResponse)
+def post_chat(req: ChatRequest) -> ChatResponse:
+    """Answer a VAT Copilot question with citations and risk scoring."""
+    return build_response(req.messages, as_of_date=req.as_of_date, model=req.model)
+
+
+@router.post("/chat/stream")
+def post_chat_stream(req: ChatRequest) -> StreamingResponse:
+    """Answer a VAT Copilot question as a server-sent event stream."""
+    events = stream_chat(req.messages, as_of_date=req.as_of_date, model=req.model)
+
+    def event_stream() -> Iterator[str]:
+        try:
+            for name, payload in events:
+                yield _sse_frame(name, payload)
+        except Exception as exc:
+            yield _sse_frame("error", {"message": str(exc)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+

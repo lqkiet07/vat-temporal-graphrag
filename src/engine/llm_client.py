@@ -1,4 +1,5 @@
 """LLM client supporting local Ollama, Google Gemini API, and OpenAI API."""
+from collections.abc import Iterator
 import json
 import os
 from json import JSONDecodeError
@@ -129,3 +130,57 @@ def generate_llm_response(
 
     # 3. Direct Ollama invocation
     return _call_ollama(prompt, model=model, host=host, timeout=timeout)
+
+
+def generate_llm_response_stream(
+    prompt: str,
+    model: str = "qwen2.5:7b",
+    host: str = "http://localhost:11434",
+    timeout: float = 120.0,
+) -> Iterator[str]:
+    """Stream response chunks from Ollama, yielding text fragments as they arrive.
+
+    Ollama answers a streaming request with NDJSON: one JSON object per line. Any
+    transport or decoding failure ends the stream silently so callers can fall back
+    to a deterministic answer instead of surfacing a 500.
+    """
+    url = f"{host}/api/generate"
+    payload = json.dumps(
+        {
+            "model": model,
+            "prompt": prompt,
+            "stream": True,
+        }
+    ).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            for raw_line in response:
+                chunk = _parse_stream_chunk(raw_line)
+                if chunk is None:
+                    continue
+                token = chunk.get("response")
+                if token:
+                    yield str(token)
+                if chunk.get("done"):
+                    return
+    except (URLError, OSError, TimeoutError, JSONDecodeError):
+        return
+
+
+def _parse_stream_chunk(raw_line: bytes) -> dict | None:
+    """Decode a single NDJSON line of an Ollama stream, skipping malformed lines."""
+    line = raw_line.decode("utf-8", errors="replace").strip()
+    if not line:
+        return None
+    try:
+        chunk = json.loads(line)
+    except JSONDecodeError:
+        return None
+    return chunk if isinstance(chunk, dict) else None
+

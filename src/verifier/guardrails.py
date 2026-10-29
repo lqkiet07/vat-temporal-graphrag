@@ -32,6 +32,18 @@ CLEAR_OUT_OF_DOMAIN_PATTERNS = [
     r"lập trình java", r"lập trình c", r"lập trình python", r"react js", r"html css",
 ]
 
+CORE_TAX_KEYWORDS = [
+    "thuế", "thue", "gtgt", "vat", "giá trị gia tăng", "gia tri gia tang", "thuế suất", "thue suat",
+    "hoàn thuế", "hoan thue", "khấu trừ", "khau tru", "hóa đơn", "hoa don", "chứng từ", "chung tu",
+    "kê khai", "ke khai", "nộp thuế", "nop thue", "miễn thuế", "mien thue", "tờ khai", "to khai",
+    "quyết toán", "quyet toan",
+]
+
+CORE_TAX_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in sorted(CORE_TAX_KEYWORDS, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class GuardrailResult:
@@ -62,16 +74,18 @@ def check_query_domain(query: str) -> GuardrailResult:
         )
 
     # 2. Check explicit out-of-domain patterns
-    for pat in CLEAR_OUT_OF_DOMAIN_PATTERNS:
-        if re.search(pat, q_clean, re.IGNORECASE):
-            return GuardrailResult(
-                is_allowed=False,
-                reason="EXPLICIT_OUT_OF_DOMAIN",
-                refusal_message="Câu hỏi của bạn không thuộc phạm vi điều chỉnh của Hệ thống Pháp lý Thuế Giá trị gia tăng (GTGT). Vui lòng đặt câu hỏi liên quan đến chính sách thuế, thuế suất hoặc quy định hóa đơn chứng từ."
-            )
+    has_core_tax = bool(CORE_TAX_PATTERN.search(q_clean))
+    if not has_core_tax:
+        for pat in CLEAR_OUT_OF_DOMAIN_PATTERNS:
+            if re.search(pat, q_clean, re.IGNORECASE):
+                return GuardrailResult(
+                    is_allowed=False,
+                    reason="EXPLICIT_OUT_OF_DOMAIN",
+                    refusal_message="Câu hỏi của bạn không thuộc phạm vi điều chỉnh của Hệ thống Pháp lý Thuế Giá trị gia tăng (GTGT). Vui lòng đặt câu hỏi liên quan đến chính sách thuế, thuế suất hoặc quy định hóa đơn chứng từ."
+                )
 
     # 3. Check domain presence
-    has_domain_keyword = any(kw in q_clean for kw in VAT_DOMAIN_KEYWORDS)
+    has_domain_keyword = has_core_tax or any(kw in q_clean for kw in VAT_DOMAIN_KEYWORDS)
     if not has_domain_keyword:
         return GuardrailResult(
             is_allowed=False,

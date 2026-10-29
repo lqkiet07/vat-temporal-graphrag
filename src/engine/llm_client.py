@@ -82,16 +82,23 @@ def _call_openai_api(prompt: str, api_key: str, model: str = "gpt-4o-mini", time
     return None
 
 
-def _call_ollama(prompt: str, model: str = "qwen2.5:7b", host: str = "http://localhost:11434", timeout: float = 30.0) -> str | None:
+def _call_ollama(
+    prompt: str,
+    model: str = "qwen2.5:7b",
+    host: str = "http://localhost:11434",
+    timeout: float = 120.0,
+    options: dict | None = None,
+) -> str | None:
     """Generate a response from Ollama API using the specified prompt and model."""
     url = f"{host}/api/generate"
-    payload = json.dumps(
-        {
-            "model": model,
-            "prompt": prompt,
-            "stream": False,
-        }
-    ).encode("utf-8")
+    payload_dict: dict = {
+        "model": model,
+        "prompt": prompt,
+        "stream": False,
+    }
+    if options:
+        payload_dict["options"] = options
+    payload = json.dumps(payload_dict).encode("utf-8")
     req = urllib.request.Request(
         url,
         data=payload,
@@ -111,7 +118,8 @@ def generate_llm_response(
     prompt: str,
     model: str = "qwen2.5:7b",
     host: str = "http://localhost:11434",
-    timeout: float = 30.0,
+    timeout: float = 120.0,
+    options: dict | None = None,
 ) -> str | None:
     """Generate a response using Ollama API, with optional Gemini/OpenAI cloud provider."""
     # 1. Check Gemini API key if configured
@@ -129,7 +137,7 @@ def generate_llm_response(
             return res
 
     # 3. Direct Ollama invocation
-    return _call_ollama(prompt, model=model, host=host, timeout=timeout)
+    return _call_ollama(prompt, model=model, host=host, timeout=timeout, options=options)
 
 
 def generate_llm_response_stream(

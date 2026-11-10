@@ -1,38 +1,131 @@
 import { resolve, type Result, type Citation, type AuditItem } from "./data";
 
+export const PIPELINE_LABELS = {
+  P3: "Thẩm định Toàn diện (Đầy đủ Căn cứ)",
+  P2: "Tra cứu theo thời điểm",
+  P1: "Tra cứu cơ bản",
+} as const;
+
+const DOCUMENT_IDS: Record<string, string> = {
+  l48: "LUAT_48_2024",
+  nd181: "ND_181_2025",
+  tt69: "TT_69_2025",
+  nd359: "ND_359_2025",
+  nd144: "ND_144_2026",
+};
+
+export const LEGAL_REFERENCE_PATTERN = String.raw`(?:LUAT|ND|TT)_\d+_\d{4}(?:_D\d+(?:_K\d+(?:_[a-zđ]+)?)?)?`;
+
+export function canonicalDocumentId(docId: string): string | null {
+  return DOCUMENT_IDS[docId] || (/^(?:LUAT|ND|TT)_\d+_\d{4}$/i.test(docId) ? docId.toUpperCase() : null);
+}
+
+export function legalReferenceLabel(id: string): string {
+  const match = id.match(/^(LUAT|ND|TT)_(\d+)_(\d{4})(?:_D(\d+)(?:_K(\d+)(?:_([a-zđ]+))?)?)?$/i);
+  if (!match) return id;
+  const [, family, number, year, article, clause, point] = match;
+  const doc = `${{ LUAT: "Luật", ND: "NĐ", TT: "TT" }[family.toUpperCase()]} ${number}/${year}`;
+  return `${point ? `Điểm ${point.toLowerCase()} ` : ""}${clause ? `${point ? "khoản" : "Khoản"} ${clause} ` : ""}${article ? `${clause ? "điều" : "Điều"} ${article} ` : ""}${doc}`;
+}
+
 export function parseCitationId(cid: string): Citation {
-  let doc = "l48";
-  let label = cid;
-  let art = cid.toLowerCase().replace(/_/g, "-");
+  const id = cid.replace(/^\[|\]$/g, "").toUpperCase();
+  const match = id.match(/^((?:LUAT|ND|TT)_\d+_\d{4})_D(\d+)(?:_K\d+(?:_[A-ZĐ]+)?)?$/);
+  if (!match) return { label: "Trích dẫn chưa xác định", doc: "", art: "" };
+  const doc = Object.keys(DOCUMENT_IDS).find((key) => DOCUMENT_IDS[key] === match[1]) || match[1];
+  return { label: legalReferenceLabel(id), doc, art: DOCUMENT_IDS[doc] ? `${doc}-d${match[2]}` : `${match[1]}_D${match[2]}` };
+}
 
-  const match = cid.match(/^(LUAT_48_2024|ND_181_2025|TT_69_2025|ND_359_2025|ND_144_2026)_D(\d+)/i);
-  if (match) {
-    const docKey = match[1].toUpperCase();
-    const articleNum = match[2];
-    if (docKey === "LUAT_48_2024") {
-      doc = "l48";
-      label = `Điều ${articleNum} Luật 48/2024`;
-      art = `l48-d${articleNum}`;
-    } else if (docKey === "ND_181_2025") {
-      doc = "nd181";
-      label = `Điều ${articleNum} NĐ 181/2025`;
-      art = `nd181-d${articleNum}`;
-    } else if (docKey === "TT_69_2025") {
-      doc = "tt69";
-      label = `Điều ${articleNum} TT 69/2025`;
-      art = `tt69-d${articleNum}`;
-    } else if (docKey === "ND_359_2025") {
-      doc = "nd359";
-      label = `Điều ${articleNum} NĐ 359/2025`;
-      art = `nd359-d${articleNum}`;
-    } else if (docKey === "ND_144_2026") {
-      doc = "nd144";
-      label = `Điều ${articleNum} NĐ 144/2026`;
-      art = `nd144-d${articleNum}`;
+export function citationArticleId(citation: Citation): string | null {
+  const doc = canonicalDocumentId(citation.doc);
+  const article = citation.art.match(/(?:-d|_D)(\d+)(?:_K\d+(?:_[a-zđ]+)?)?$/i)?.[1];
+  return doc && article ? `${doc}_D${article}` : null;
+}
+
+// Presentation-only replacements also apply to locally stored, older responses.
+export function friendlyLegalText(text: string): string {
+  return text
+    .replace(/Hệ thống đã kết nối trực tiếp với Neo4j Knowledge Graph và FastAPI Backend\./gi, "Hệ thống đã sẵn sàng hỗ trợ tra cứu văn bản pháp luật.")
+    .replace(/Đã đối chiếu (\d+) điều khoản viện dẫn qua Đồ thị Tri thức Neo4j tại mốc/gi, "Đã đối chiếu $1 điều khoản viện dẫn tại mốc")
+    .replace(/Màng lọc Domain Guardrail đã kích hoạt để bảo vệ tính chính xác của cơ sở tri thức\./gi, "Hệ thống chỉ hỗ trợ câu hỏi về thuế giá trị gia tăng.")
+    .replace(/, được vận hành bởi Đồ thị Tri thức Thời gian \(Temporal GraphRAG\)/gi, "")
+    .replace(/P2 Temporal Graph: chưa chạy lớp Citation Verifier, trích dẫn chưa được đối chiếu chéo\./gi, "Chế độ tra cứu theo thời điểm chưa đối chiếu chéo các trích dẫn.")
+    .replace(/P1 Flat RAG không có lớp kiểm tra hiệu lực/gi, "Chế độ tra cứu cơ bản không kiểm tra hiệu lực")
+    .replace(/P1 Flat RAG: không kiểm tra quan hệ sửa đổi/gi, "Chế độ tra cứu cơ bản không kiểm tra văn bản sửa đổi")
+    .replace(/P3: Full System để kích hoạt Temporal Graph và Verifier/gi, "chế độ thẩm định toàn diện để đối chiếu hiệu lực và trích dẫn")
+    .replace(/Backend FastAPI/gi, "dịch vụ tra cứu")
+    .replace(/Trạng thái đồ thị:/gi, "Dữ liệu tra cứu:")
+    .replace(/Đã hoàn thành kiểm tra trên đồ thị\./gi, "Đã hoàn thành đối chiếu các quy định.")
+    .replace(/\(HƯỚNG_DẪN\)/g, "")
+    .replace(/SỬA_ĐỔI/g, "sửa đổi")
+    .replace(/HƯỚNG_DẪN/g, "hướng dẫn")
+    .replace(/Đồ thị Tri thức Thời gian|đồ thị tri thức|Neo4j Knowledge Graph|Temporal GraphRAG/gi, "kho văn bản pháp luật")
+    .replace(/\bNeo4j\b|\bFastAPI\b/gi, "dịch vụ tra cứu")
+    .replace(/Citation Verifier|\bVerifier\b/gi, "đối chiếu trích dẫn")
+    .replace(/Domain Guardrail/gi, "kiểm tra phạm vi câu hỏi")
+    .replace(/Rule Engine/gi, "đối chiếu điều kiện")
+    .replace(/Temporal Graph/gi, "tra cứu theo thời điểm")
+    .replace(/Flat RAG|Vector Search/gi, "tra cứu cơ bản")
+    .replace(/bẫy niên đại/gi, "quy định chưa phù hợp với thời điểm áp dụng")
+    .replace(/\bP3(?:_FullSystem)?\b/g, PIPELINE_LABELS.P3)
+    .replace(/\bP2(?:_TemporalGraph)?\b/g, PIPELINE_LABELS.P2)
+    .replace(/\bP1(?:_FlatRAG)?\b/g, PIPELINE_LABELS.P1)
+    .trim();
+}
+
+export function legalPlainText(text: string): string {
+  return friendlyLegalText(text).replace(
+    new RegExp(`\\[(${LEGAL_REFERENCE_PATTERN})\\]|\\b(${LEGAL_REFERENCE_PATTERN})\\b`, "gi"),
+    (_, bracketed: string, bare: string) => legalReferenceLabel(bracketed || bare),
+  );
+}
+
+export type LegalPoint = { id: string; code: string; content: string };
+export type LegalClause = LegalPoint & { points?: LegalPoint[] };
+export type LegalArticle = LegalPoint & {
+  title: string;
+  lead?: string;
+  tables?: string[];
+  clauses?: LegalClause[];
+};
+export type LegalChapter = { id: string; code?: string; title: string; articles: LegalArticle[] };
+export type LegalDocumentDetail = {
+  id: string;
+  code: string;
+  title: string;
+  valid_from: string;
+  valid_to: string;
+  chapters?: LegalChapter[];
+  articles?: LegalArticle[];
+};
+
+const documentCache = new Map<string, LegalDocumentDetail>();
+const pendingDocuments = new Map<string, Promise<LegalDocumentDetail>>();
+
+export async function getLegalDocument(docId: string, refresh = false): Promise<LegalDocumentDetail> {
+  const id = canonicalDocumentId(docId);
+  if (!id) throw new Error("Không xác định được văn bản cần đọc.");
+  const cached = documentCache.get(id);
+  if (cached && !refresh) return cached;
+  const pending = pendingDocuments.get(id);
+  if (pending) return pending;
+
+  const request = (async () => {
+    const response = await fetch(`/api/documents/${encodeURIComponent(id)}`);
+    if (!response.ok) throw new Error("Chưa tải được toàn văn. Vui lòng thử lại.");
+    const document: LegalDocumentDetail = await response.json();
+    if (document.id !== id || (!Array.isArray(document.articles) && !Array.isArray(document.chapters))) {
+      throw new Error("Nội dung văn bản chưa sẵn sàng.");
     }
+    documentCache.set(id, document);
+    return document;
+  })();
+  pendingDocuments.set(id, request);
+  try {
+    return await request;
+  } finally {
+    pendingDocuments.delete(id);
   }
-
-  return { label, doc, art };
 }
 
 export async function queryLegalApi(
@@ -87,7 +180,7 @@ export async function queryLegalApi(
           },
           {
             tone: "ok",
-            text: "Màng lọc Domain Guardrail đã kích hoạt để bảo vệ tính chính xác của cơ sở tri thức.",
+            text: "Hệ thống chỉ hỗ trợ câu hỏi về thuế giá trị gia tăng.",
           },
         ],
         is_out_of_domain: true,
@@ -102,7 +195,7 @@ export async function queryLegalApi(
         rule: "Cơ sở tri thức hiệu lực: Luật Thuế GTGT 48/2024/QH15, Nghị định 181/2025, Thông tư 69/2025, Nghị định 359/2025, Nghị định 144/2026.",
         citations: [],
         application: [
-          "Xin chào Quý khách / Quý Doanh nghiệp! Tôi là Trợ lý Pháp lý ảo về Thuế Giá trị gia tăng (GTGT) Việt Nam, được vận hành bởi Đồ thị Tri thức Thời gian (Temporal GraphRAG).",
+          "Xin chào! Tôi là trợ lý tra cứu Thuế Giá trị gia tăng (GTGT) Việt Nam dành cho người dân và doanh nghiệp.",
           "Hệ thống có thể hỗ trợ bạn trực tiếp:",
           "• Thẩm định thuế suất GTGT cho từng trường hợp gia công, xuất khẩu, thương mại dịch vụ.",
           "• Tra cứu tính hiệu lực thời gian của các điều luật tại bất kỳ mốc sự việc nào (tự động phát hiện bẫy niên đại).",
@@ -110,8 +203,8 @@ export async function queryLegalApi(
         ],
         conclusion: "Mời bạn nhập câu hỏi cụ thể về tình huống thuế GTGT hoặc chọn các kịch bản gợi ý bên dưới để bắt đầu thẩm định.",
         audit: [
-          { tone: "ok", text: "Hệ thống đã kết nối trực tiếp với Neo4j Knowledge Graph và FastAPI Backend." },
-          { tone: "ok", text: "Trạng thái đồ thị: 5 văn bản pháp luật, 76 điều luật, 271 khoản sẵn sàng tra cứu." },
+          { tone: "ok", text: "Hệ thống đã sẵn sàng hỗ trợ tra cứu văn bản pháp luật." },
+          { tone: "ok", text: "Bạn có thể chọn ngày diễn ra sự việc để tra cứu quy định tại thời điểm đó." },
         ],
         is_greeting: true,
       };
@@ -139,7 +232,7 @@ export async function queryLegalApi(
     if (citations.length > 0) {
       audit.push({
         tone: "ok",
-        text: `Đã đối chiếu ${citations.length} điều khoản viện dẫn qua Đồ thị Tri thức Neo4j tại mốc ${asOfDate}.`,
+        text: `Đã đối chiếu ${citations.length} điều khoản viện dẫn tại mốc ${asOfDate}.`,
       });
     }
 
@@ -153,7 +246,7 @@ export async function queryLegalApi(
       issue: data.irac_sections?.issue || `Xác định quy định pháp lý cho: "${query}"`,
       rule: data.irac_sections?.rule || "Không có quy phạm viện dẫn cụ thể.",
       citations,
-      application: application.length > 0 ? application : [appText || "Đã hoàn thành kiểm tra trên đồ thị."],
+      application: application.length > 0 ? application : [appText || "Đã hoàn thành đối chiếu các quy định."],
       conclusion: data.irac_sections?.conclusion || "Hoàn thành thẩm định pháp lý.",
       audit,
       trap,
@@ -165,7 +258,7 @@ export async function queryLegalApi(
       ...fallback,
       audit: [
         ...fallback.audit,
-        { tone: "warn", text: "Lưu ý: Đang hiển thị kết quả giả lập do mất kết nối Backend FastAPI." },
+        { tone: "warn", text: "Lưu ý: Đang hiển thị kết quả giả lập do mất kết nối dịch vụ tra cứu." },
       ],
     };
   }

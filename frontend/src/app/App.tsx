@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle, ArrowUp, BookOpen, CalendarDays, CheckCircle2, ChevronDown, ChevronRight,
   Clock, Copy, ExternalLink, FileCode, FileSearch, FileText, Filter, Folder,
-  GitBranch, History, Info, Layers, LayoutGrid, Lightbulb, Loader2, Lock,
+  History, Info, Layers, LayoutGrid, Lightbulb, Loader2, Lock,
   LogOut, MapPin, MessageSquare, Mic, MoreHorizontal, PanelLeft, PanelLeftClose,
   Paperclip, Plus, RotateCcw, Search, Send, Settings, Share2, Sliders,
   Sparkles, SquarePen, ThumbsDown, ThumbsUp, Trash2, User, UserCheck, X,
@@ -11,8 +11,12 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Popover, PopoverContent, PopoverTrigger } from "@/app/components/ui/popover";
 import emblem from "@/imports/tai-xuong.png";
 import drum from "@/imports/img_6-hinh-nen-powerpoint-trong-dong.jpg";
-import { DOCS, SCENARIOS, resolve, type Result, type LawDoc, type Citation } from "./data";
-import { queryLegalApi } from "./api";
+import { DOCS, SCENARIOS, type Result, type LawDoc, type Citation } from "./data";
+import {
+  PIPELINE_LABELS, LEGAL_REFERENCE_PATTERN, canonicalDocumentId, citationArticleId,
+  friendlyLegalText, getLegalDocument, legalPlainText, legalReferenceLabel, parseCitationId,
+  queryLegalApi, type LegalDocumentDetail, type LegalChapter,
+} from "./api";
 
 type Pipeline = "P3" | "P2" | "P1";
 type Msg = { id: number; q: string; date: string; pipeline: Pipeline; result: Result | null };
@@ -56,16 +60,16 @@ const DEFAULT_SETTINGS: SystemSettings = {
 };
 
 const PIPELINES = [
-  { key: "P3", label: "P3: Đầy đủ (Graph + Rule + RAG)", badge: "Flash (P3)", desc: "Độ chính xác cao nhất cho quy định chuyển tiếp giáp ranh 01/07/2025" },
-  { key: "P2", label: "P2: Rule Engine + Neo4j", badge: "Graph", desc: "Truy vấn quan hệ thời gian trực tiếp trên đồ thị tri thức" },
-  { key: "P1", label: "P1: RAG cơ bản (Vector Search)", badge: "Vector", desc: "Chỉ tìm kiếm ngữ nghĩa phẳng, dễ dính bẫy niên đại luật cũ" },
+  { key: "P3", label: PIPELINE_LABELS.P3, desc: "Đối chiếu quy định, thời điểm áp dụng và các trích dẫn" },
+  { key: "P2", label: PIPELINE_LABELS.P2, desc: "Tra cứu quy định theo ngày diễn ra sự việc; chưa đối chiếu chéo trích dẫn" },
+  { key: "P1", label: PIPELINE_LABELS.P1, desc: "Tìm nội dung liên quan; cần kiểm tra thêm hiệu lực và văn bản sửa đổi" },
 ] as const;
 
 const STEPS = [
-  "Phân tích thực thể pháp lý và mốc thời gian sự kiện...",
-  "Truy vấn đồ thị tri thức Neo4j: Xác định khoảng hiệu lực văn bản...",
-  "Áp dụng Rule Engine: So sánh điều kiện miễn thuế & thuế suất 0%...",
-  "Kiểm định đối chiếu thực tế và thẩm định chống ảo giác...",
+  "Đang đọc tình huống và ngày diễn ra sự việc...",
+  "Đang tra cứu các quy định liên quan...",
+  "Đang đối chiếu điều kiện và mức thuế áp dụng...",
+  "Đang tổng hợp kết quả và những điểm cần lưu ý...",
 ];
 
 function fmtDate(iso: string): string {
@@ -108,11 +112,19 @@ export function App() {
   const [step, setStep] = useState(0);
 
   // Layout & Drawers state
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => window.matchMedia("(min-width: 768px)").matches);
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [libraryCategory, setLibraryCategory] = useState<"all" | "luat" | "nghidinh" | "thongtu">("all");
   const [activeLibraryDoc, setActiveLibraryDoc] = useState("l48");
   const [librarySearch, setLibrarySearch] = useState("");
+  const [activeLibraryArticle, setActiveLibraryArticle] = useState<string | null>(null);
+  const [documentRetry, setDocumentRetry] = useState(0);
+  const [articleFocusVersion, setArticleFocusVersion] = useState(0);
+  const [documentState, setDocumentState] = useState<{
+    doc: string;
+    status: "loading" | "ready" | "error";
+    data?: LegalDocumentDetail;
+  } | null>(null);
 
   const [relatedOpen, setRelatedOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -158,6 +170,13 @@ export function App() {
   }, [user]);
 
   useEffect(() => {
+    const desktop = window.matchMedia("(min-width: 768px)");
+    const collapseOnMobile = () => { if (!desktop.matches) setSidebarOpen(false); };
+    desktop.addEventListener("change", collapseOnMobile);
+    return () => desktop.removeEventListener("change", collapseOnMobile);
+  }, []);
+
+  useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, step]);
 
@@ -172,6 +191,60 @@ export function App() {
   const latestCitations: Citation[] = useMemo(() => {
     return latestResult?.citations || [];
   }, [latestResult]);
+
+  function openDocument(doc: string, article: string | null = null) {
+    setRelatedOpen(false);
+    setActiveLibraryDoc(doc);
+    setActiveLibraryArticle(article);
+    setDocumentRetry(0);
+    setArticleFocusVersion((value) => value + 1);
+    setLibraryOpen(true);
+  }
+
+  function openCitation(citation: Citation) {
+    const article = citationArticleId(citation);
+    setLibraryCategory("all");
+    setLibrarySearch("");
+    openDocument(article ? citation.doc : "", article);
+  }
+
+  function openRelated() {
+    setLibraryOpen(false);
+    setRelatedOpen(true);
+  }
+
+  useEffect(() => {
+    if (!libraryOpen) return;
+    let cancelled = false;
+    setDocumentState({ doc: activeLibraryDoc, status: "loading" });
+    getLegalDocument(activeLibraryDoc, documentRetry > 0).then(
+      (data) => { if (!cancelled) setDocumentState({ doc: activeLibraryDoc, status: "ready", data }); },
+      () => { if (!cancelled) setDocumentState({ doc: activeLibraryDoc, status: "error" }); },
+    );
+    return () => { cancelled = true; };
+  }, [libraryOpen, activeLibraryDoc, documentRetry]);
+
+  useEffect(() => {
+    if (!libraryOpen || !activeLibraryArticle || documentState?.doc !== activeLibraryDoc || documentState.status === "loading") return;
+    const frame = requestAnimationFrame(() => {
+      const article = document.getElementById(`lib-art-${activeLibraryArticle}`);
+      article?.focus({ preventScroll: true });
+      article?.scrollIntoView({ block: "start", behavior: "smooth" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [libraryOpen, activeLibraryDoc, activeLibraryArticle, documentState, articleFocusVersion]);
+
+  useEffect(() => {
+    if (!libraryOpen && !relatedOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setLibraryOpen(false);
+        setRelatedOpen(false);
+      }
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [libraryOpen, relatedOpen]);
 
   function newChat() {
     const id = `c_${Date.now()}`;
@@ -257,9 +330,9 @@ export function App() {
   // Filter library docs by category and search
   const categorizedDocs = useMemo(() => {
     return DOCS.filter((d) => {
-      const isLuat = d.id === "l48" || d.id === "l13";
-      const isNghiDinh = d.id === "nd181" || d.id === "nd144";
-      const isThongTu = d.id === "tt69";
+      const isLuat = d.id.startsWith("l");
+      const isNghiDinh = d.id.startsWith("nd");
+      const isThongTu = d.id.startsWith("tt");
 
       if (libraryCategory === "luat" && !isLuat) return false;
       if (libraryCategory === "nghidinh" && !isNghiDinh) return false;
@@ -281,8 +354,18 @@ export function App() {
   }, [libraryCategory, librarySearch]);
 
   const activeDocData = useMemo(() => {
-    return DOCS.find((d) => d.id === activeLibraryDoc) || DOCS[0];
+    return DOCS.find((d) => d.id === activeLibraryDoc);
   }, [activeLibraryDoc]);
+
+  const currentDocumentState = documentState?.doc === activeLibraryDoc ? documentState : null;
+  const libraryDocument = currentDocumentState?.data;
+  const librarySections = useMemo(() => {
+    if (libraryDocument) return documentSections(libraryDocument);
+    if (currentDocumentState?.status === "error" && activeDocData) return documentSections(localExcerpt(activeDocData));
+    return [];
+  }, [libraryDocument, currentDocumentState?.status, activeDocData]);
+  const articleUnavailable = Boolean(activeLibraryArticle && currentDocumentState?.status !== "loading" && currentDocumentState &&
+    !librarySections.some((section) => section.articles.some((article) => article.id === activeLibraryArticle)));
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[#FFFFFF] font-sans text-[#1F1F1F] antialiased">
@@ -290,8 +373,8 @@ export function App() {
           1. LEFT SIDEBAR (PUBLIC SERVICE LEGAL ASSISTANT)
          ========================================================================= */}
       <aside
-        className={`relative z-30 flex h-full shrink-0 flex-col border-r border-[#E5E7EB] bg-[#F8FAFC] transition-all duration-300 ease-in-out ${
-          sidebarOpen ? "w-[280px]" : "w-[68px]"
+        className={`z-30 flex h-full shrink-0 flex-col border-r border-[#E5E7EB] bg-[#F8FAFC] transition-all duration-300 ease-in-out ${
+          sidebarOpen ? "absolute inset-y-0 left-0 w-[280px] md:relative" : "relative w-[68px]"
         }`}
       >
         {/* Top Header: National Emblem Logo + Web Title */}
@@ -344,7 +427,7 @@ export function App() {
           <div className="space-y-0.5">
             {/* THƯ VIỆN TOÀN BỘ VĂN BẢN (CHIA THEO MỤC) */}
             <button
-              onClick={() => setLibraryOpen(true)}
+              onClick={() => openDocument(activeLibraryDoc)}
               className={`flex w-full items-center rounded-xl py-2 text-[#334155] transition hover:bg-[#E2E8F0] ${
                 sidebarOpen ? "gap-3 px-3" : "justify-center px-0"
               }`}
@@ -488,20 +571,20 @@ export function App() {
                 alt="Quốc huy Việt Nam"
                 className="h-6 w-auto object-contain"
               />
-              <span className="text-[16.5px] font-bold tracking-tight text-[#1E3A8A]">
+            <span className="hidden lg:inline text-[16.5px] font-bold tracking-tight text-[#1E3A8A]">
                 Hệ thống Hỏi đáp Pháp lý Thuế GTGT
               </span>
             </div>
 
             <span className="hidden md:inline-flex rounded-full bg-[#EFF6FF] px-2.5 py-0.5 text-[10.5px] font-semibold text-[#1E3A8A] border border-[#BFDBFE]">
-              Cơ sở tri thức: Đóng băng 30/09/2026
+              Dữ liệu cập nhật đến 30/09/2026
             </span>
           </div>
 
           <div className="flex items-center gap-2">
             {/* Nút: Văn bản liên quan (Chỉ mở các tài liệu có liên kết đến câu hỏi AI vừa trả lời) */}
             <button
-              onClick={() => setRelatedOpen(true)}
+              onClick={openRelated}
               className={`flex items-center gap-1.5 rounded-full px-3.5 py-1.5 text-[12px] font-medium transition ${
                 relatedOpen
                   ? "bg-[#1E3A8A] text-white shadow-xs"
@@ -552,11 +635,11 @@ export function App() {
                 <p className="mt-2.5 max-w-lg text-[14px] text-[#475569] leading-relaxed">
                   {user.isLoggedIn ? (
                     <>
-                      Chào <strong className="text-[#1E3A8A]">{user.name}</strong>, hãy nhập tình huống phát sinh để hệ thống đối chiếu qua đồ thị tri thức thời gian và thẩm định hiệu lực luật thuế GTGT.
+                      Chào <strong className="text-[#1E3A8A]">{user.name}</strong>, hãy nhập tình huống và ngày diễn ra sự việc để tra cứu quy định thuế GTGT áp dụng cho bạn.
                     </>
                   ) : (
                     <>
-                      Chào bạn, hãy nhập tình huống phát sinh để hệ thống đối chiếu qua đồ thị tri thức thời gian và thẩm định hiệu lực luật thuế GTGT.
+                      Chào bạn, hãy nhập tình huống và ngày diễn ra sự việc để tra cứu quy định thuế GTGT áp dụng cho bạn.
                     </>
                   )}
                 </p>
@@ -581,7 +664,7 @@ export function App() {
 
                     {/* Action Row inside Composer */}
                     <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2 border-t border-[#E2E8F0] pt-2.5">
-                      <div className="flex items-center gap-2">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
                         {/* Evaluation Date Pill */}
                         <label
                           className="flex items-center gap-1.5 rounded-full border border-[#CBD5E1] bg-white px-3 py-1 text-[11.5px] font-medium text-[#334155] hover:bg-[#F8FAFC] cursor-pointer shadow-2xs"
@@ -602,15 +685,15 @@ export function App() {
                           <PopoverTrigger asChild>
                             <button
                               className="flex items-center gap-1.5 rounded-full border border-[#CBD5E1] bg-white px-3 py-1 text-[11.5px] font-semibold text-[#1E3A8A] hover:bg-[#F8FAFC] shadow-2xs"
-                              title="Kiến trúc suy luận AI"
+                              title="Chọn cách tra cứu"
                             >
-                              <span>{pipeline}: {PIPELINES.find((p) => p.key === pipeline)?.badge}</span>
+                              <span>{PIPELINE_LABELS[pipeline]}</span>
                               <ChevronDown className="h-3.5 w-3.5 text-[#64748B]" />
                             </button>
                           </PopoverTrigger>
                           <PopoverContent align="start" className="w-[280px] rounded-2xl border border-[#CBD5E1] bg-white p-1.5 shadow-xl">
                             <div className="px-2 py-1.5 text-[11px] font-bold uppercase tracking-wider text-[#64748B]">
-                              Chọn Pipeline suy luận
+                              Chọn cách tra cứu
                             </div>
                             {PIPELINES.map((p) => (
                               <button
@@ -663,7 +746,7 @@ export function App() {
                         className="flex items-center gap-1.5 rounded-full border border-[#CBD5E1] bg-white px-3.5 py-1.5 text-[12px] font-medium text-[#334155] shadow-2xs transition hover:border-[#1E3A8A] hover:bg-[#F8FAFC]"
                       >
                         <FileText className="h-3 w-3 text-[#1E3A8A]" />
-                        <span>{s.label.replace(/^Kịch bản \d+:\s*/, "")}</span>
+                        <span>{s.label.replace(/^Kịch bản \d+:\s*/, "").replace("Bẫy niên đại trước", "Quy định trước")}</span>
                       </button>
                     ))}
                   </div>
@@ -680,11 +763,11 @@ export function App() {
                     <div className="flex justify-end">
                       <div className="max-w-[85%] rounded-3xl rounded-br-md bg-[#F1F5F9] px-5 py-3.5 text-[#0F172A] shadow-2xs border border-[#CBD5E1]">
                         <p className="text-[14.5px] leading-relaxed">{m.q}</p>
-                        <div className="mt-2 flex items-center justify-end gap-2 text-[11px] text-[#64748B]">
+                        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-[11px] text-[#64748B]">
                           <CalendarDays className="h-3 w-3 text-[#1E3A8A]" />
                           <span>Mốc sự kiện: <strong>{fmtDate(m.date)}</strong></span>
                           <span>•</span>
-                          <span className="font-semibold text-[#1E3A8A]">{m.pipeline}</span>
+                          <span className="font-semibold text-[#1E3A8A]">{PIPELINE_LABELS[m.pipeline]}</span>
                         </div>
                       </div>
                     </div>
@@ -693,17 +776,13 @@ export function App() {
                     {m.result ? (
                       <Answer
                         msg={m}
-                        onOpenRelated={() => setRelatedOpen(true)}
-                        onOpenDocInLibrary={(docId) => {
-                          setActiveLibraryDoc(docId);
-                          setLibraryOpen(true);
-                        }}
+                        onOpenCitation={openCitation}
                       />
                     ) : (
                       <div className="rounded-2xl border border-[#CBD5E1] bg-white p-4 shadow-xs">
                         <div className="mb-3 flex items-center gap-2 text-[13px] font-bold text-[#1E3A8A]">
                           <Loader2 className="h-4 w-4 animate-spin text-[#1E3A8A]" />
-                          <span>Đang thực thi quy trình thẩm định luật Temporal GraphRAG...</span>
+                          <span>Đang tra cứu quy định thuế GTGT cho bạn...</span>
                         </div>
                         <ul className="space-y-2 text-[12.5px]">
                           {STEPS.map((l, i) => (
@@ -738,7 +817,7 @@ export function App() {
         {messages.length > 0 && (
           <div className="relative z-20 shrink-0 border-t border-[#F1F5F9] bg-white/90 px-4 py-3 backdrop-blur-md">
             <div className="mx-auto w-full max-w-[760px]">
-              <div className="rounded-full border border-[#CBD5E1] bg-[#F8FAFC] pl-4 pr-2 py-1.5 shadow-xs transition focus-within:border-[#1E3A8A] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#1E3A8A]/15 flex items-center gap-2">
+              <div className="rounded-2xl sm:rounded-full border border-[#CBD5E1] bg-[#F8FAFC] pl-4 pr-2 py-1.5 shadow-xs transition focus-within:border-[#1E3A8A] focus-within:bg-white focus-within:ring-2 focus-within:ring-[#1E3A8A]/15 flex flex-wrap items-center gap-2">
                 <textarea
                   ref={taRef}
                   value={query}
@@ -751,10 +830,10 @@ export function App() {
                     }
                   }}
                   placeholder="Nhập câu hỏi tiếp theo về thuế GTGT..."
-                  className="flex-1 resize-none bg-transparent py-1 text-[14px] outline-none placeholder:text-[#94A3B8]"
+                  className="min-w-0 basis-full sm:basis-0 flex-1 resize-none bg-transparent py-1 text-[14px] outline-none placeholder:text-[#94A3B8]"
                 />
 
-                <label className="flex items-center gap-1 rounded-full border border-[#CBD5E1] bg-white px-2.5 py-1 text-[11px] font-medium text-[#334155] cursor-pointer shadow-2xs">
+                <label className="order-1 flex items-center gap-1 rounded-full border border-[#CBD5E1] bg-white px-2.5 py-1 text-[11px] font-medium text-[#334155] cursor-pointer shadow-2xs">
                   <CalendarDays className="h-3 w-3 text-[#1E3A8A]" />
                   <input
                     type="date"
@@ -766,18 +845,17 @@ export function App() {
 
                 <select
                   value={pipeline}
+                  aria-label="Cách tra cứu"
                   onChange={(e) => setPipeline(e.target.value as Pipeline)}
-                  className="rounded-full border border-[#CBD5E1] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#1E3A8A] outline-none cursor-pointer shadow-2xs"
+                  className="order-3 sm:order-2 min-w-0 max-w-full basis-full sm:basis-auto flex-1 rounded-full border border-[#CBD5E1] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#1E3A8A] outline-none cursor-pointer shadow-2xs"
                 >
-                  <option value="P3">P3 Full</option>
-                  <option value="P2">P2 Graph</option>
-                  <option value="P1">P1 Flat</option>
+                  {PIPELINES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
                 </select>
 
                 <button
                   onClick={() => send()}
                   disabled={!query.trim() || loading}
-                  className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1E3A8A] text-white transition hover:bg-[#1E40AF] active:scale-95 disabled:bg-[#CBD5E1] disabled:text-[#94A3B8]"
+                  className="order-2 sm:order-3 ml-auto flex h-8 w-8 items-center justify-center rounded-full bg-[#1E3A8A] text-white transition hover:bg-[#1E40AF] active:scale-95 disabled:bg-[#CBD5E1] disabled:text-[#94A3B8]"
                 >
                   {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ArrowUp className="h-4 w-4" />}
                 </button>
@@ -791,11 +869,13 @@ export function App() {
           DRAWER 1: THƯ VIỆN TOÀN BỘ VĂN BẢN (CHIA THEO MỤC: LUẬT, NGHỊ ĐỊNH, THÔNG TƯ)
          ========================================================================= */}
       <aside
-        className={`relative z-40 flex h-full shrink-0 flex-col border-l border-[#CBD5E1] bg-[#F8FAFC] shadow-2xl transition-all duration-300 ease-in-out ${
-          libraryOpen ? "w-[480px]" : "w-0 overflow-hidden border-none"
+        aria-label="Thư viện văn bản pháp luật"
+        hidden={!libraryOpen}
+        className={`fixed inset-y-0 right-0 z-40 h-full shrink-0 flex-col border-l border-[#CBD5E1] bg-[#F8FAFC] shadow-2xl xl:relative ${
+          libraryOpen ? "flex w-full sm:w-[480px]" : "!hidden"
         }`}
       >
-        <div className="flex h-14 items-center justify-between border-b border-[#CBD5E1] bg-white px-4">
+        <div className="flex min-h-14 shrink-0 items-center justify-between gap-2 border-b border-[#CBD5E1] bg-white px-4">
           <div className="flex items-center gap-2">
             <BookOpen className="h-4 w-4 text-[#1E3A8A]" />
             <span className="font-bold text-[14px] text-[#1E3A8A]">
@@ -812,14 +892,14 @@ export function App() {
         </div>
 
         {/* Categories Tabs: Tất cả, Luật, Nghị định, Thông tư */}
-        <div className="flex border-b border-[#CBD5E1] bg-white px-3 pt-2 gap-1 text-[12px]">
+        <div className="flex shrink-0 overflow-x-auto border-b border-[#CBD5E1] bg-white px-3 pt-2 gap-1 whitespace-nowrap text-[12px]">
           <button
             onClick={() => setLibraryCategory("all")}
             className={`px-3 py-1.5 font-semibold rounded-t-lg transition ${
               libraryCategory === "all" ? "bg-[#EFF6FF] text-[#1E3A8A] border-b-2 border-[#1E3A8A]" : "text-[#64748B] hover:bg-gray-50"
             }`}
           >
-            Tất cả (5)
+            Tất cả ({DOCS.length})
           </button>
           <button
             onClick={() => setLibraryCategory("luat")}
@@ -827,7 +907,7 @@ export function App() {
               libraryCategory === "luat" ? "bg-[#EFF6FF] text-[#1E3A8A] border-b-2 border-[#1E3A8A]" : "text-[#64748B] hover:bg-gray-50"
             }`}
           >
-            🏛️ Luật (2)
+            Luật ({DOCS.filter((doc) => doc.id.startsWith("l")).length})
           </button>
           <button
             onClick={() => setLibraryCategory("nghidinh")}
@@ -835,7 +915,7 @@ export function App() {
               libraryCategory === "nghidinh" ? "bg-[#EFF6FF] text-[#1E3A8A] border-b-2 border-[#1E3A8A]" : "text-[#64748B] hover:bg-gray-50"
             }`}
           >
-            📜 Nghị định (2)
+            Nghị định ({DOCS.filter((doc) => doc.id.startsWith("nd")).length})
           </button>
           <button
             onClick={() => setLibraryCategory("thongtu")}
@@ -843,7 +923,7 @@ export function App() {
               libraryCategory === "thongtu" ? "bg-[#EFF6FF] text-[#1E3A8A] border-b-2 border-[#1E3A8A]" : "text-[#64748B] hover:bg-gray-50"
             }`}
           >
-            📑 Thông tư (1)
+            Thông tư ({DOCS.filter((doc) => doc.id.startsWith("tt")).length})
           </button>
         </div>
 
@@ -866,7 +946,7 @@ export function App() {
           {categorizedDocs.map((d) => (
             <button
               key={d.id}
-              onClick={() => setActiveLibraryDoc(d.id)}
+              onClick={() => openDocument(d.id)}
               className={`shrink-0 rounded-full px-3 py-1 font-semibold transition ${
                 activeLibraryDoc === d.id
                   ? "bg-[#1E3A8A] text-white shadow-xs"
@@ -879,40 +959,52 @@ export function App() {
         </div>
 
         {/* Selected Document Details & Content */}
-        <div className="scroll-quiet flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="scroll-quiet min-h-0 flex-1 overflow-y-auto p-4 space-y-4" aria-busy={!currentDocumentState || currentDocumentState.status === "loading"}>
           <div className="rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] p-3 text-[12px]">
-            <div className="font-bold text-[#1E3A8A]">{activeDocData.full}</div>
-            <div className="mt-1 flex items-center gap-2">
-              <span className="font-semibold text-[#475569]">Hiệu lực: {activeDocData.effective}</span>
-              <span className={`rounded px-1.5 py-0.2 text-[10px] font-bold ${
-                activeDocData.badge.tone === "green" ? "bg-green-100 text-green-800" : "bg-gray-200 text-gray-700"
-              }`}>
-                {activeDocData.badge.text}
-              </span>
-            </div>
+            <div className="font-bold text-[#1E3A8A]">{libraryDocument ? `${legalReferenceLabel(libraryDocument.id)} — ${libraryDocument.title}` : activeDocData?.full || legalReferenceLabel(canonicalDocumentId(activeLibraryDoc) || "Văn bản được trích dẫn")}</div>
+            {libraryDocument && <div className="mt-1 text-[#475569]">Có hiệu lực từ: {fmtDate(libraryDocument.valid_from)}{libraryDocument.valid_to && libraryDocument.valid_to !== "9999-12-31" ? ` đến ${fmtDate(libraryDocument.valid_to)}` : ""}</div>}
           </div>
 
-          {activeDocData.chapters.map((ch, idx) => (
+          {(!currentDocumentState || currentDocumentState.status === "loading") && (
+            <p role="status" className="flex items-center gap-2 text-[13px] text-[#475569]"><Loader2 className="h-4 w-4 animate-spin" />Đang tải toàn văn...</p>
+          )}
+          {currentDocumentState?.status === "error" && (
+            <div role="alert" className="rounded-xl border border-[#FED7AA] bg-[#FFF7ED] p-3 text-[13px] text-[#9A3412]">
+              <p>Chưa tải được toàn văn văn bản.</p>
+              {activeDocData && <p className="mt-1 font-semibold">Bên dưới chỉ là trích đoạn lưu sẵn, không phải toàn văn.</p>}
+              <button onClick={() => setDocumentRetry((value) => value + 1)} className="mt-2 rounded-lg border border-[#FDBA74] px-3 py-1 font-semibold focus-visible:outline-2">Thử lại</button>
+            </div>
+          )}
+          {articleUnavailable && <div role="status" className="rounded-xl border border-[#FED7AA] bg-[#FFF7ED] p-3 text-[13px] text-[#9A3412]">
+            <p>Chưa có nội dung {legalReferenceLabel(activeLibraryArticle!)} trong phần văn bản hiện có.</p>
+            {currentDocumentState?.status === "ready" && <button onClick={() => setDocumentRetry((value) => value + 1)} className="mt-2 rounded-lg border border-[#FDBA74] px-3 py-1 font-semibold">Tải lại toàn văn</button>}
+          </div>}
+
+          {librarySections.map((ch, idx) => (
             <div key={idx} className="space-y-3">
-              <div className="font-bold text-[12px] uppercase text-[#64748B] border-b border-[#CBD5E1]/50 pb-1">
-                {ch.title}
-              </div>
+              {ch.title && <div className="font-bold text-[12px] uppercase text-[#64748B] border-b border-[#CBD5E1]/50 pb-1">{ch.title}</div>}
               {ch.articles.map((art) => (
                 <div
                   key={art.id}
                   id={`lib-art-${art.id}`}
-                  className="rounded-2xl border border-[#CBD5E1] bg-white p-3.5 text-[12.5px]"
+                  tabIndex={-1}
+                  data-selected={art.id === activeLibraryArticle}
+                  className={`scroll-mt-3 rounded-2xl border p-3.5 text-[12.5px] outline-none ${art.id === activeLibraryArticle ? "border-[#2563EB] bg-[#EFF6FF] ring-2 ring-[#BFDBFE]" : "border-[#CBD5E1] bg-white"}`}
                 >
                   <div className="font-bold text-[#1E3A8A]">
-                    Điều {art.no}: {art.title}
+                    {art.code.replace(/^Dieu\b/i, "Điều")}: {art.title}
                   </div>
-                  <div className="mt-2 space-y-1.5 leading-relaxed text-[#334155]">
-                    {art.clauses.map((c) => (
-                      <div key={c.n}>
-                        <span className="font-semibold text-[#0F172A]">{c.n}. </span>
-                        <span>{c.text}</span>
+                  <div className="mt-2 space-y-2 whitespace-pre-wrap break-words leading-relaxed text-[#334155]">
+                    {art.lead && <p>{art.lead}</p>}
+                    {!art.lead && !art.clauses?.length && art.content && <p>{art.content}</p>}
+                    {(art.clauses || []).map((c, clauseIndex) => (
+                      <div key={`${c.id}-${clauseIndex}`}>
+                        <span className="font-semibold text-[#0F172A]">{c.code.replace(/^Khoan\b/i, "Khoản")}. </span>
+                        <span>{c.content}</span>
+                        {(c.points || []).map((point, pointIndex) => <p key={`${point.id}-${pointIndex}`} className="mt-1.5 pl-3"><strong>{point.code.replace(/^Diem\b/i, "Điểm")}. </strong>{point.content}</p>)}
                       </div>
                     ))}
+                    {(art.tables || []).map((table, index) => <LegalTable key={index} text={table} />)}
                   </div>
                 </div>
               ))}
@@ -925,8 +1017,10 @@ export function App() {
           DRAWER 2: VĂN BẢN LIÊN QUAN TRỰC TIẾP ĐẾN CÂU HỎI VỪA TRẢ LỜI
          ========================================================================= */}
       <aside
-        className={`relative z-40 flex h-full shrink-0 flex-col border-l border-[#CBD5E1] bg-[#F8FAFC] shadow-2xl transition-all duration-300 ease-in-out ${
-          relatedOpen ? "w-[440px]" : "w-0 overflow-hidden border-none"
+        aria-label="Văn bản liên quan"
+        hidden={!relatedOpen}
+        className={`fixed inset-y-0 right-0 z-40 h-full shrink-0 flex-col border-l border-[#CBD5E1] bg-[#F8FAFC] shadow-2xl xl:relative ${
+          relatedOpen ? "flex w-full sm:w-[440px]" : "!hidden"
         }`}
       >
         <div className="flex h-14 items-center justify-between border-b border-[#CBD5E1] bg-white px-4">
@@ -957,7 +1051,7 @@ export function App() {
           ) : (
             <>
               <div className="rounded-2xl border border-[#BFDBFE] bg-[#EFF6FF] p-3 text-[12px] text-[#1E3A8A]">
-                <strong>Cơ chế liên kết tự động:</strong> Danh sách dưới đây chỉ gồm các điều khoản được AI và Đồ thị tri thức đối chiếu trực tiếp cho câu hỏi hiện tại.
+                Danh sách dưới đây gồm các điều khoản được trích dẫn trong câu trả lời gần nhất. Chọn “Mở toàn văn” để đọc đúng điều khoản.
               </div>
 
               {latestCitations.map((c, i) => {
@@ -980,12 +1074,9 @@ export function App() {
                     className="rounded-2xl border border-[#CBD5E1] bg-white p-4 shadow-xs"
                   >
                     <div className="flex items-center justify-between gap-2 border-b border-[#F1F5F9] pb-2">
-                      <span className="font-bold text-[13px] text-[#1E3A8A]">{c.label}</span>
+                      <span className="font-bold text-[13px] text-[#1E3A8A]">{legalPlainText(c.label)}</span>
                       <button
-                        onClick={() => {
-                          setActiveLibraryDoc(c.doc);
-                          setLibraryOpen(true);
-                        }}
+                        onClick={() => openCitation(c)}
                         className="flex items-center gap-1 text-[11px] font-semibold text-[#2563EB] hover:underline"
                       >
                         <span>Mở toàn văn</span>
@@ -1008,7 +1099,7 @@ export function App() {
                       </div>
                     ) : (
                       <p className="mt-2 text-[12px] text-[#64748B]">
-                        Văn bản liên quan: {targetDoc?.tab}
+                        Chọn “Mở toàn văn” để tải nội dung điều khoản được trích dẫn.
                       </p>
                     )}
                   </div>
@@ -1030,14 +1121,14 @@ export function App() {
               <span>Cài đặt hệ thống</span>
             </DialogTitle>
             <DialogDescription className="text-[12.5px] text-[#64748B]">
-              Thiết lập mô hình suy luận, ngôn ngữ giải trình và tham số ngày mặc định
+              Chọn cách tra cứu, ngôn ngữ và ngày diễn ra sự việc mặc định
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 pt-2 text-[13px]">
             {/* 1. Model Pipeline Selection */}
             <div>
-              <label className="font-bold text-[#0F172A] block mb-1">1. Mô hình suy luận (Pipeline AI)</label>
+              <label className="font-bold text-[#0F172A] block mb-1">1. Cách tra cứu</label>
               <select
                 value={settings.pipeline}
                 onChange={(e) => {
@@ -1047,12 +1138,10 @@ export function App() {
                 }}
                 className="w-full rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-2.5 font-medium text-[13px] outline-none focus:border-[#1E3A8A]"
               >
-                <option value="P3">P3: Đầy đủ (Temporal GraphRAG + Rule Engine + RAG) [Khuyên dùng]</option>
-                <option value="P2">P2: Rule Engine + Neo4j Graph</option>
-                <option value="P1">P1: Vector Search RAG (Dễ dính bẫy niên đại)</option>
+                {PIPELINES.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}
               </select>
               <p className="mt-1 text-[11px] text-[#64748B]">
-                Pipeline P3 tự động xử lý điểm cắt thời gian 01/07/2025 giữa Luật 13/2008 và Luật 48/2024.
+                Chọn thẩm định toàn diện để đối chiếu thêm hiệu lực văn bản và căn cứ trích dẫn tại ngày diễn ra sự việc.
               </p>
             </div>
 
@@ -1071,7 +1160,7 @@ export function App() {
 
             {/* 3. Default Evaluation Date */}
             <div>
-              <label className="font-bold text-[#0F172A] block mb-1">3. Mốc thời gian mặc định (T_eval)</label>
+              <label className="font-bold text-[#0F172A] block mb-1">3. Ngày diễn ra sự việc mặc định</label>
               <input
                 type="date"
                 value={settings.defaultDate}
@@ -1088,7 +1177,7 @@ export function App() {
 
             {/* 4. Display Theme */}
             <div>
-              <label className="font-bold text-[#0F172A] block mb-1">4. Giao diện (Theme)</label>
+              <label className="font-bold text-[#0F172A] block mb-1">4. Giao diện</label>
               <div className="grid grid-cols-3 gap-2 text-center text-[12px]">
                 <button
                   type="button"
@@ -1123,8 +1212,8 @@ export function App() {
             {/* 5. LLM Mode Toggle */}
             <div className="flex items-center justify-between rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-3">
               <div>
-                <div className="font-bold text-[#0F172A] text-[13px]">Bật mô hình ngôn ngữ lớn (LLM)</div>
-                <div className="text-[11.5px] text-[#64748B]">Tổng hợp lập luận IRAC bằng AI (Ollama Qwen2.5 / Gemini API)</div>
+                <div className="font-bold text-[#0F172A] text-[13px]">Bật hỗ trợ diễn giải bằng AI</div>
+                <div className="text-[11.5px] text-[#64748B]">Diễn giải tình huống, căn cứ và kết luận thành câu trả lời dễ đọc</div>
               </div>
               <input
                 type="checkbox"
@@ -1246,38 +1335,133 @@ export function App() {
   );
 }
 
+function documentSections(document: LegalDocumentDetail): LegalChapter[] {
+  const seen = new Set<string>();
+  const takeNewArticles = (articles: LegalChapter["articles"] = []) => articles.filter((article) => {
+    if (seen.has(article.id)) return false;
+    seen.add(article.id);
+    return true;
+  });
+  const sections = (document.chapters || []).map((chapter) => ({
+    ...chapter,
+    title: chapter.title || chapter.code || "",
+    articles: takeNewArticles(chapter.articles),
+  })).filter((chapter) => chapter.articles.length > 0);
+  const remaining = takeNewArticles(document.articles);
+  if (remaining.length) sections.push({ id: `${document.id}-remaining`, title: "", articles: remaining });
+  return sections;
+}
+
+function localExcerpt(document: LawDoc): LegalDocumentDetail {
+  const docId = canonicalDocumentId(document.id)!;
+  return {
+    id: docId, code: document.tab, title: document.full,
+    valid_from: document.effective.split("/").reverse().join("-"), valid_to: "",
+    chapters: document.chapters.map((chapter, index) => ({
+      id: `${docId}-chapter-${index}`, title: chapter.title,
+      articles: chapter.articles.map((article) => ({
+        id: `${docId}_D${article.no}`, code: `Điều ${article.no}`, title: article.title,
+        content: "", lead: article.note,
+        clauses: article.clauses.map((clause) => ({
+          id: `${article.id}-clause-${clause.n}`, code: `Khoản ${clause.n}`, content: clause.text,
+          points: clause.points?.map((point) => ({ id: `${article.id}-${clause.n}-${point.l}`, code: `Điểm ${point.l}`, content: point.text })),
+        })),
+        tables: article.table ? [[article.table.head, article.table.head.map(() => "---"), ...article.table.rows].map((row) => `| ${row.join(" | ")} |`).join("\n")] : [],
+      })),
+    })),
+  };
+}
+
+function LegalTable({ text }: { text: string }) {
+  const rows = text.trim().split(/\r?\n/).map((line) => line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, "|")));
+  if (rows.length < 2 || !rows[1].every((cell) => /^:?-{3,}:?$/.test(cell))) {
+    return <p className="whitespace-pre-wrap">{text}</p>;
+  }
+  return (
+    <div className="overflow-x-auto rounded-lg border border-[#CBD5E1] whitespace-normal">
+      <table className="w-full border-collapse text-left text-[12px]">
+        <thead className="bg-[#F1F5F9]"><tr>{rows[0].map((cell, index) => <th scope="col" key={index} className="border-b border-[#CBD5E1] px-3 py-2">{cell}</th>)}</tr></thead>
+        <tbody>{rows.slice(2).map((row, index) => <tr key={index}>{row.map((cell, column) => <td key={column} className="border-b border-[#E2E8F0] px-3 py-2 align-top">{cell}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
+  );
+}
+
+function splitLegalParagraphs(text: string): string[] {
+  return text.split(/\r?\n+/).flatMap((line) => {
+    const cases = [...line.matchAll(/(?:^|\s)\((\d+)\)/g)];
+    if (cases.length < 2 || !cases.every((item, index) => Number(item[1]) === index + 1)) return [line.trim()];
+    const starts = cases.map((item) => item.index! + (item[0].startsWith("(") ? 0 : 1));
+    return [line.slice(0, starts[0]).trim(), ...starts.map((start, index) => line.slice(start, starts[index + 1]).trim())];
+  }).filter(Boolean);
+}
+
+function supplementaryRule(result: Result): string {
+  const rule = result.rule.replace(/^(?:(?:Căn cứ(?: pháp lý(?: viện dẫn)?)?)\s*:\s*)+/i, "").trim();
+  const ids = [...rule.matchAll(new RegExp(`\\[(${LEGAL_REFERENCE_PATTERN})\\]|\\b(${LEGAL_REFERENCE_PATTERN})\\b`, "gi"))];
+  const remainder = rule.replace(new RegExp(`\\[${LEGAL_REFERENCE_PATTERN}\\]|\\b${LEGAL_REFERENCE_PATTERN}\\b`, "gi"), "").replace(/[\s,;.()[\]]/g, "");
+  const listedArticles = new Set((result.citations || []).map(citationArticleId));
+  return ids.length > 0 && !remainder && ids.every((match) => listedArticles.has(citationArticleId(parseCitationId(match[1] || match[2])))) ? "" : rule;
+}
+
+function SmartLegalText({ text, onOpenCitation }: { text: string; onOpenCitation: (citation: Citation) => void }) {
+  const content = friendlyLegalText(text);
+  const tokens = new RegExp(`\\[${LEGAL_REFERENCE_PATTERN}\\]|\\b${LEGAL_REFERENCE_PATTERN}\\b|\\d+(?:[.,]\\d+)?[ \\t]*%`, "gi");
+  const parts: ReactNode[] = [];
+  let position = 0;
+  for (const match of content.matchAll(tokens)) {
+    const start = match.index!;
+    parts.push(content.slice(position, start));
+    const token = match[0];
+    if (token.endsWith("%")) {
+      parts.push(<strong key={start} data-tax-rate className="inline-block rounded-md bg-[#DBEAFE] px-1.5 py-0.5 font-bold text-[#1E3A8A]">{token}</strong>);
+    } else {
+      const id = token.replace(/^\[|\]$/g, "");
+      if (/_D\d+/i.test(id)) {
+        const citation = parseCitationId(id);
+        parts.push(<button key={start} type="button" onClick={() => onOpenCitation(citation)} aria-label={`Đọc ${citation.label}`} title={`Đọc ${citation.label}`} className="mx-0.5 inline-flex max-w-full items-baseline gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2 py-0.5 align-baseline text-left text-[0.85em] font-semibold leading-normal text-[#1E3A8A] transition hover:bg-[#DBEAFE] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2563EB]"><FileText aria-hidden="true" className="relative top-0.5 h-3 w-3 shrink-0" /><span>{citation.label}</span></button>);
+      } else {
+        parts.push(<span key={start}>{legalReferenceLabel(id)}</span>);
+      }
+    }
+    position = start + token.length;
+  }
+  parts.push(content.slice(position));
+  return <>{parts}</>;
+}
+
 // Answer Component with Public Legal Reasoning, Citations, and Actions
 function Answer({
   msg,
-  onOpenRelated,
-  onOpenDocInLibrary,
+  onOpenCitation,
 }: {
   msg: Msg;
-  onOpenRelated: () => void;
-  onOpenDocInLibrary: (docId: string) => void;
+  onOpenCitation: (citation: Citation) => void;
 }) {
   const r = msg.result!;
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
-  const [showTrace, setShowTrace] = useState(false);
+  const rule = supplementaryRule(r);
+  const shareText = legalPlainText(r.conclusion) + (rule ? "\n\nCăn cứ: " + legalPlainText(rule) : "") +
+    ((r.citations || []).length ? "\n\nVăn bản trích dẫn: " + r.citations.map((citation) => legalPlainText(citation.label)).join("; ") : "");
 
-  function copyText() {
-    navigator.clipboard.writeText(r.conclusion + "\n\nCăn cứ: " + r.rule);
+  async function copyText() {
+    await navigator.clipboard.writeText(shareText);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
 
   return (
-    <div className="group rounded-3xl border border-[#CBD5E1] bg-white/95 backdrop-blur-xs p-5 shadow-xs transition hover:shadow-md">
+    <div className="group min-w-0 break-words rounded-3xl border border-[#CBD5E1] bg-white/95 backdrop-blur-xs p-4 sm:p-5 shadow-xs transition hover:shadow-md">
       {/* Header Row: Public Legal Emblem + Temporal Validity Tag */}
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#F1F5F9] pb-3.5">
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#EFF6FF] border border-[#BFDBFE]">
             <img src={emblem} alt="Quốc huy" className="h-4 w-auto" />
           </div>
           <span className="font-bold text-[14px] text-[#1E3A8A]">Thẩm định Pháp lý Thuế GTGT</span>
           <span className="rounded-full bg-[#EFF6FF] px-2 py-0.5 text-[10.5px] font-semibold text-[#1E3A8A] border border-[#BFDBFE]">
-            {msg.pipeline}
+            {PIPELINE_LABELS[msg.pipeline]}
           </span>
         </div>
 
@@ -1307,12 +1491,12 @@ function Answer({
             </>
           )}
         </div>
-        <p className="mt-2 text-[15px] font-semibold leading-relaxed text-[#0F172A]">
-          {r.conclusion}
-        </p>
-        {!r.is_out_of_domain && !r.is_greeting && r.rule && (
+        <div className="mt-2 space-y-3 text-[15px] font-semibold leading-relaxed text-[#0F172A]">
+          {splitLegalParagraphs(r.conclusion).map((paragraph, index) => <p key={index}><SmartLegalText text={paragraph} onOpenCitation={onOpenCitation} /></p>)}
+        </div>
+        {!r.is_out_of_domain && !r.is_greeting && rule && (
           <p className="mt-2 text-[13px] leading-relaxed text-[#475569]">
-            <strong>Căn cứ:</strong> {r.rule}
+            <strong>Căn cứ:</strong> <SmartLegalText text={rule} onOpenCitation={onOpenCitation} />
           </p>
         )}
       </div>
@@ -1322,7 +1506,7 @@ function Answer({
         <div className="mt-3 flex items-start gap-2.5 rounded-2xl border border-[#FED7AA] bg-[#FFF7ED] p-3.5 text-[12.5px] text-[#9A3412]">
           <AlertTriangle className="h-4 w-4 shrink-0 text-[#EA580C] mt-0.5" />
           <div className="leading-relaxed">
-            <strong>Cảnh báo bẫy niên đại:</strong> {r.trap}
+            <strong>Lưu ý về thời điểm áp dụng:</strong> <SmartLegalText text={r.trap} onOpenCitation={onOpenCitation} />
           </div>
         </div>
       )}
@@ -1331,13 +1515,13 @@ function Answer({
       {r.application && r.application.length > 0 && (
         <div className="mt-3.5 space-y-1.5">
           <div className="text-[11.5px] font-bold uppercase tracking-wider text-[#64748B]">
-            Các bước đối chiếu mốc thời gian:
+            Giải thích cho tình huống của bạn:
           </div>
           <ul className="space-y-1 text-[13px] text-[#334155]">
-            {r.application.map((app, i) => (
+            {r.application.flatMap(splitLegalParagraphs).map((app, i) => (
               <li key={i} className="flex items-start gap-2">
                 <span className="mt-1 h-1.5 w-1.5 rounded-full bg-[#1E3A8A] shrink-0" />
-                <span>{app}</span>
+                <span className="min-w-0"><SmartLegalText text={app} onOpenCitation={onOpenCitation} /></span>
               </li>
             ))}
           </ul>
@@ -1347,13 +1531,13 @@ function Answer({
       {/* Audit Checklist */}
       <div className="mt-3.5 space-y-1.5">
         <div className="text-[11.5px] font-bold uppercase tracking-wider text-[#64748B]">
-          Kiểm định căn cứ pháp lý đồ thị:
+          Kết quả đối chiếu và lưu ý:
         </div>
         <ul className="space-y-1.5 text-[13px]">
-          {r.audit.map((a, i) => (
+          {(r.audit || []).map((a, i) => (
             <li key={i} className="flex items-start gap-2 text-[#334155]">
-              <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${a.tone === "ok" ? "bg-[#059669]" : "bg-[#EA580C]"}`} />
-              <span>{a.text}</span>
+              <span className={`mt-1.5 h-1.5 w-1.5 rounded-full shrink-0 ${a.tone === "ok" ? "bg-[#059669]" : a.tone === "bad" ? "bg-[#DC2626]" : "bg-[#EA580C]"}`} />
+              <span className="min-w-0"><SmartLegalText text={a.text} onOpenCitation={onOpenCitation} /></span>
             </li>
           ))}
         </ul>
@@ -1366,35 +1550,14 @@ function Answer({
           {r.citations.map((c) => (
             <button
               key={c.label}
-              onClick={onOpenRelated}
+              onClick={() => onOpenCitation(c)}
               className="flex items-center gap-1 rounded-full border border-[#BFDBFE] bg-[#EFF6FF] px-2.5 py-0.5 text-[11px] font-semibold text-[#1E3A8A] transition hover:bg-[#DBEAFE]"
-              title="Bấm để xem chi tiết văn bản liên quan"
+              title={`Đọc ${legalPlainText(c.label)}`}
             >
-              <span>{c.label}</span>
+              <span>{legalPlainText(c.label)}</span>
               <ExternalLink className="h-2.5 w-2.5" />
             </button>
           ))}
-        </div>
-      )}
-
-      {/* Collapsible Temporal Graph Trace */}
-      {!r.is_out_of_domain && !r.is_greeting && r.citations && r.citations.length > 0 && (
-        <div className="mt-3 border-t border-[#F1F5F9] pt-2.5">
-          <button
-            onClick={() => setShowTrace(!showTrace)}
-            className="flex items-center gap-1.5 text-[12px] font-medium text-[#1E3A8A] hover:underline"
-          >
-            <GitBranch className="h-3.5 w-3.5" />
-            <span>{showTrace ? "Ẩn đường đi đồ thị tri thức Neo4j" : "Xem đường đi suy luận trên Đồ thị Thời gian"}</span>
-          </button>
-
-          {showTrace && (
-            <div className="mt-2 rounded-2xl border border-[#E2E8F0] bg-[#F8FAFC] p-3 text-[11.5px] font-mono text-[#334155]">
-              <div className="text-[#059669] font-bold">{"MATCH (e:Entity {name: 'PhanMem'})-[r:has_temporal_tax_rate]->(t:TaxRate)"}</div>
-              <div className="text-[#6B7280]">{"WHERE r.start_date <= date('"}{msg.date}{"') AND date('"}{msg.date}{"') <= r.end_date"}</div>
-              <div className="text-[#1E3A8A] font-bold mt-1">{"-> Result: Rate = 0% | Interval: [2025-07-01, inf) | Law: 48/2024/QH15 Art 9.1.b"}</div>
-            </div>
-          )}
         </div>
       )}
 
@@ -1425,7 +1588,7 @@ function Answer({
           <button
             onClick={() => {
               if (navigator.share) {
-                navigator.share({ title: "Tư vấn thuế GTGT", text: r.conclusion });
+                navigator.share({ title: "Tư vấn thuế GTGT", text: shareText });
               } else {
                 copyText();
               }
